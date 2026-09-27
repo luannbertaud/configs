@@ -1,0 +1,4 @@
+! layout = symbols
+  fr-custom = fr-custom
+
+! include %S/evdev
