@@ -1,11 +1,15 @@
-# aliases
+# Aliases
 
 Shell aliases (bash/zsh), kept in `${XDG_CONFIG_HOME:-~/.config}/aliases/aliases.sh` and sourced from `~/.bashrc` / `~/.zshrc`.
 
-Install (or update):
+## Install (or update):
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/luannbertaud/configs/aliases/install.sh | sh
+```
+or
+```sh
+aliases-update
 ```
 
 Current shell only, nothing written:
@@ -14,8 +18,11 @@ Current shell only, nothing written:
 eval "$(curl -fsSL https://raw.githubusercontent.com/luannbertaud/configs/aliases/aliases.sh)"
 ```
 
-Uninstall:
-
+## Uninstall:
+```sh
+aliases-uninstall
+```
+or
 ```sh
 curl -fsSL https://raw.githubusercontent.com/luannbertaud/configs/aliases/install.sh | sh -s -- --uninstall
 ```
