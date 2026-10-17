@@ -26,7 +26,13 @@ map('n', '<S-h>', '<cmd>bprevious<cr>', { desc = 'Buffer précédent' })
 map('n', '<leader>bd', '<cmd>bdelete<cr>', { desc = 'Fermer le buffer' })
 
 -- Explorateur de fichiers (oil.nvim) ----------------------------------------
-map('n', '-', '<cmd>Oil<cr>', { desc = 'Ouvrir le dossier parent (oil)' })
+-- `-`        : ouvre oil sur le dossier PARENT (façon vim-vinegar).
+-- `<leader>e`: ouvre oil dans une fenêtre FLOTTANTE sur le dossier courant.
+-- (oil s'édite comme un buffer : modifie les noms/chemins puis `:w` pour appliquer.)
+map('n', '-', '<cmd>Oil<cr>', { desc = 'Oil : dossier parent' })
+map('n', '<leader>e', function()
+  require('oil').toggle_float()
+end, { desc = 'Explorateur de fichiers (oil)' })
 
 -- Formatage (conform.nvim) --------------------------------------------------
 map({ 'n', 'v' }, '<leader>f', function()
