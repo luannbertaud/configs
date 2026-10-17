@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  nvim-clean — efface les DONNÉES d'une config Neovim isolée (NVIM_APPNAME).
+#  nvim-clean — efface les DONNÉES (data, state, cache) d'une config Neovim.
 #
-#  Supprime  : data/ , state/ , cache/ propres à la config.
+#  Supprime  : data/ , state/ , cache/ de la config.
 #  Conserve  : ~/.config/<nom>  (ta configuration, versionnée).
-#  Ne touche PAS : $XDG_RUNTIME_DIR (partagé entre configs, éphémère).
+#  Ne touche PAS : $XDG_RUNTIME_DIR (partagé, éphémère).
 #
 #  Usage :
 #     nvim-clean.sh <nom> [--dry-run] [-y|--yes]
 #
 #  Exemples :
-#     nvim-clean.sh nvim-rc
-#     nvim-clean.sh nvim-rc --dry-run
+#     nvim-clean.sh nvim
+#     nvim-clean.sh nvim --dry-run
 # ============================================================================
 set -euo pipefail
 
@@ -21,7 +21,7 @@ usage() {
   cat <<'EOF'
 Usage: nvim-clean.sh <nom-config> [--dry-run] [-y|--yes]
 
-  <nom-config>   valeur de NVIM_APPNAME (ex: nvim-rc)
+  <nom-config>   nom du dossier de config (ex: nvim)
   --dry-run      affiche ce qui serait supprimé, sans rien supprimer
   -y, --yes      ne pas demander de confirmation
 
@@ -63,7 +63,7 @@ targets=(
 )
 
 printf 'Config CONSERVÉE : %s\n' "$keep"
-[ -d "$keep" ] || printf '  (attention : ce dossier n’existe pas)\n'
+[ -d "$keep" ] || printf '  (attention : dossier de config absent)\n'
 
 # --- Rassembler ce qui existe réellement ------------------------------------
 existing=()
@@ -101,4 +101,4 @@ for t in "${existing[@]}"; do
   printf 'supprimé : %s\n' "$t"
 done
 
-printf '\nTerminé. Relance `NVIM_APPNAME=%s nvim` pour une installation propre.\n' "$name"
+printf '\nTerminé. Relance Neovim pour une installation propre.\n'

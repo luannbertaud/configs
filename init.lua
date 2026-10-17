@@ -1,10 +1,8 @@
 -- ============================================================================
---  nvim-rc — point d'entrée
+--  nvim — point d'entrée
 -- ----------------------------------------------------------------------------
---  LANCEMENT : cette config est isolée, elle ne remplace PAS ~/.config/nvim.
---      NVIM_APPNAME=nvim-rc nvim
---  (l'env var fait pointer config/data/state/cache sur nvim-rc ; on peut en
---   faire un alias `nvrc` dans ~/.bashrc si souhaité).
+--  LANCEMENT : configuration principale de Neovim (dans ~/.config/nvim).
+--      nvim
 --
 --  PRÉ-REQUIS SYSTÈME (à installer via pacman/yay, hors Mason) :
 --      neovim>=0.12  git  ripgrep  fd  fzf  wl-clipboard  curl  unzip  tar

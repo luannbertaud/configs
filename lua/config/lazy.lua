@@ -2,8 +2,8 @@
 --  Bootstrap + configuration de lazy.nvim
 -- ----------------------------------------------------------------------------
 --  lazy.nvim est le seul plugin installé hors de lua/plugins/ : on le clone ici
---  de façon VISIBLE, dans le data dir propre à nvim-rc.
---  Emplacement des plugins : ~/.local/share/nvim-rc/lazy/
+--  de façon VISIBLE, dans le data dir de Neovim.
+--  Emplacement des plugins : ~/.local/share/nvim/lazy/
 -- ============================================================================
 
 local lazypath = vim.fn.stdpath('data') .. '/lazy/lazy.nvim'

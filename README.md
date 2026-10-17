@@ -1,7 +1,7 @@
-# nvim-rc
+# nvim
 
-Configuration Neovim **isolée** : elle vit dans `~/.config/nvim-rc` et ne touche
-pas à `~/.config/nvim`. Elle se lance via la variable d'environnement `NVIM_APPNAME`.
+Configuration Neovim personnelle : elle vit dans `~/.config/nvim` et se lance
+avec la simple commande `nvim`.
 
 ## Pré-requis
 
@@ -11,25 +11,19 @@ pas à `~/.config/nvim`. Elle se lance via la variable d'environnement `NVIM_APP
 ## Lancer
 
 ```sh
-NVIM_APPNAME=nvim-rc nvim
-```
-
-Alias pratique dans `~/.bashrc` :
-
-```sh
-alias nvrc='NVIM_APPNAME=nvim-rc nvim'
+nvim
 ```
 
 ## Où vont les fichiers
 
 | Rôle                     | Chemin                         | Supprimable |
 | ------------------------ | ------------------------------ | ----------- |
-| Config (à garder)        | `~/.config/nvim-rc`            | non         |
-| Plugins                  | `~/.local/share/nvim-rc/lazy`  | oui         |
-| LSP / formatters (Mason) | `~/.local/share/nvim-rc/mason` | oui         |
-| Parsers treesitter       | `~/.local/share/nvim-rc/site`  | oui         |
-| État (undo, shada, logs) | `~/.local/state/nvim-rc`       | oui         |
-| Cache                    | `~/.cache/nvim-rc`             | oui         |
+| Config (à garder)        | `~/.config/nvim`            | non         |
+| Plugins                  | `~/.local/share/nvim/lazy`  | oui         |
+| LSP / formatters (Mason) | `~/.local/share/nvim/mason` | oui         |
+| Parsers treesitter       | `~/.local/share/nvim/site`  | oui         |
+| État (undo, shada, logs) | `~/.local/state/nvim`       | oui         |
+| Cache                    | `~/.cache/nvim`             | oui         |
 
 ## Installation & mises à jour
 
@@ -52,13 +46,13 @@ Reproduire ailleurs : `git clone` → lancer → `:Lazy restore` → redémarrer
 ## Repartir d'une installation propre
 
 ```sh
-scripts/nvim-clean.sh nvim-rc            # demande confirmation
-scripts/nvim-clean.sh nvim-rc --dry-run  # affiche sans supprimer
-scripts/nvim-clean.sh nvim-rc -y         # sans confirmation
+scripts/nvim-clean.sh nvim            # demande confirmation
+scripts/nvim-clean.sh nvim --dry-run  # affiche sans supprimer
+scripts/nvim-clean.sh nvim -y         # sans confirmation
 ```
 
-Supprime `~/.local/share/nvim-rc`, `~/.local/state/nvim-rc` et `~/.cache/nvim-rc`.
-**Conserve** `~/.config/nvim-rc`. Ne touche pas au runtime dir partagé.
+Supprime `~/.local/share/nvim`, `~/.local/state/nvim` et `~/.cache/nvim`.
+**Conserve** `~/.config/nvim`. Ne touche pas au runtime dir partagé.
 
 ## Étendre la configuration
 

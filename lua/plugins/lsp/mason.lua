@@ -1,5 +1,5 @@
 -- Plugin : williamboman/mason.nvim — installe des outils externes.
--- Emplacement : ~/.local/share/nvim-rc/mason/ (bin/ et packages/).
+-- Emplacement : ~/.local/share/nvim/mason/ (bin/ et packages/).
 --
 -- NOTE IMPORTANTE : mason.nvim n'a PAS d'option `ensure_installed`.
 -- On installe donc EXPLICITEMENT la liste `tools` ci-dessous au démarrage
