@@ -1,0 +1,5 @@
+# Rien de généré ne vit dans ce dossier : les plugins, parsers et binaires LSP
+# sont installés dans ~/.local/share/nvim-rc (hors dépôt).
+# lazy-lock.json EST versionné : c'est lui qui fige les versions des plugins.
+
+.DS_Store
