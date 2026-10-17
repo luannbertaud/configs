@@ -1,0 +1,8 @@
+# Style Lua du dépôt.
+# Lu automatiquement par stylua (lui-même lancé par conform.nvim au format-on-save),
+# ce qui garantit le même résultat quelle que soit la machine.
+column_width = 120
+indent_type = "Spaces"
+indent_width = 4
+quote_style = "AutoPreferSingle"          # aligné sur le style d'écriture de cette config
+collapse_simple_statement = "Always"      # garde les one-liners compacts (ex. `keys = { … }`)
