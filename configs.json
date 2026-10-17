@@ -1,0 +1,4 @@
+{
+  "desc": "Disposition clavier fr adaptée (qwerty 84 touches)",
+  "target": "~/.config/xkb"
+}
