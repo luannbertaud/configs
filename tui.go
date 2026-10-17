@@ -24,6 +24,7 @@ var (
 	keyStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
 	leftStyle     = lipgloss.NewStyle().Padding(0, 1)
 	rightStyle    = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder(), false, false, false, true)
+	boxStyle      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("240")).Padding(1, 2)
 	confirmStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 3)
 )
 
@@ -293,10 +294,19 @@ func (m model) View() string {
 
 	header := titleStyle.Render("configs") + subtitleStyle.Render("  —  "+repoSlug)
 
-	leftW := 34
-	rightW := m.width - leftW - 6
-	if rightW < 34 {
-		rightW = 34
+	// Largeur de la boîte : plafonnée pour laisser des marges et rester
+	// centrée horizontalement.
+	maxW := m.width - 8
+	if maxW > 84 {
+		maxW = 84
+	}
+	if maxW < 40 {
+		maxW = 40
+	}
+	leftW := 26
+	rightW := maxW - leftW - 10
+	if rightW < 28 {
+		rightW = 28
 	}
 
 	left := leftStyle.Width(leftW).Render(m.leftPane())
@@ -304,7 +314,7 @@ func (m model) View() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", m.footer())
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, boxStyle.Render(content))
 }
 
 func (m model) leftPane() string {
@@ -409,7 +419,9 @@ func (m model) footer() string {
 	case m.status != "":
 		b.WriteString(dimStyle.Render(m.status) + "\n")
 	}
-	b.WriteString(helpStyle.Render("↑/↓ sélectionner · entrée/a agir · d supprimer · i installer les manquants · u tout mettre à jour · r actualiser · q quitter"))
+	b.WriteString(helpStyle.Render("↑/↓ sélectionner · entrée/a agir · d supprimer"))
+	b.WriteString("\n")
+	b.WriteString(helpStyle.Render("i installer les manquants · u tout mettre à jour · r actualiser · q quitter"))
 	return b.String()
 }
 

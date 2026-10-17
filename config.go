@@ -310,7 +310,9 @@ func buildScript(steps []step) (string, func(), error) {
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\nset -eu\n")
 	for _, s := range steps {
-		fmt.Fprintf(&b, "\nprintf '\\n=== %%s ===\\n' %s\n", shq(s.desc))
+		// Bannière de l'étape, puis la commande exacte qui va être exécutée.
+		fmt.Fprintf(&b, "\nprintf '\\n\\033[1;36m=== %%s ===\\033[0m\\n' %s\n", shq(s.desc))
+		fmt.Fprintf(&b, "printf '\\033[2m$ %%s\\033[0m\\n' %s\n", shq(s.sh))
 		b.WriteString(s.sh)
 		b.WriteString("\n")
 	}
