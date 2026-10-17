@@ -22,14 +22,14 @@ alias nvrc='NVIM_APPNAME=nvim-rc nvim'
 
 ## Où vont les fichiers
 
-| Rôle | Chemin | Supprimable |
-|---|---|---|
-| Config (à garder) | `~/.config/nvim-rc` | non |
-| Plugins | `~/.local/share/nvim-rc/lazy` | oui |
-| LSP / formatters (Mason) | `~/.local/share/nvim-rc/mason` | oui |
-| Parsers treesitter | `~/.local/share/nvim-rc/site` | oui |
-| État (undo, shada, logs) | `~/.local/state/nvim-rc` | oui |
-| Cache | `~/.cache/nvim-rc` | oui |
+| Rôle                     | Chemin                         | Supprimable |
+| ------------------------ | ------------------------------ | ----------- |
+| Config (à garder)        | `~/.config/nvim-rc`            | non         |
+| Plugins                  | `~/.local/share/nvim-rc/lazy`  | oui         |
+| LSP / formatters (Mason) | `~/.local/share/nvim-rc/mason` | oui         |
+| Parsers treesitter       | `~/.local/share/nvim-rc/site`  | oui         |
+| État (undo, shada, logs) | `~/.local/state/nvim-rc`       | oui         |
+| Cache                    | `~/.cache/nvim-rc`             | oui         |
 
 ## Installation & mises à jour
 
@@ -37,15 +37,15 @@ Au **premier lancement**, `lazy.nvim` s'installe seul puis installe les plugins 
 Mason installe ensuite les outils et serveurs LSP en arrière-plan (laisse
 quelques secondes, relance une fois si besoin).
 
-| Commande | Quand |
-|---|---|
-| `:Lazy` | voir l'état, installer ce qui manque |
-| `:Lazy sync` | après un clone, ou tout (re)mettre à jour |
+| Commande        | Quand                                                        |
+| --------------- | ------------------------------------------------------------ |
+| `:Lazy`         | voir l'état, installer ce qui manque                         |
+| `:Lazy sync`    | après un clone, ou tout (re)mettre à jour                    |
 | `:Lazy restore` | **nouvelle machine** : fige les versions du `lazy-lock.json` |
-| `:Lazy update` | mettre à jour les plugins (met à jour le lockfile) |
-| `:Mason` | voir les outils / serveurs LSP installés ou manquants |
-| `:MasonUpdate` | rafraîchir le catalogue Mason |
-| `:checkhealth` | diagnostiquer (lazy, mason, lsp, treesitter…) |
+| `:Lazy update`  | mettre à jour les plugins (met à jour le lockfile)           |
+| `:Mason`        | voir les outils / serveurs LSP installés ou manquants        |
+| `:MasonUpdate`  | rafraîchir le catalogue Mason                                |
+| `:checkhealth`  | diagnostiquer (lazy, mason, lsp, treesitter…)                |
 
 Reproduire ailleurs : `git clone` → lancer → `:Lazy restore` → redémarrer.
 
@@ -111,14 +111,20 @@ Deux endroits, dans l'ordre — avec le **même nom de serveur** :
 2. `lua/plugins/lsp/nvim-lspconfig.lua` → ajouter le nom à `vim.lsp.enable({ … })`
    (et une entrée `vim.lsp.config('nom', { … })` pour le paramétrer).
 
-Relance, puis `:Mason` pour vérifier l'installation. Les raccourcis LSP
-(`gd`, `K`, `<leader>rn`…) sont posés automatiquement à l'attachement du serveur
-(voir `lua/config/autocmds.lua`).
+Relance, puis `:Mason` pour vérifier l'installation. Aucun raccourci LSP n'est à
+poser : on s'appuie sur les **défauts de Neovim** (`grn`, `gra`, `K`, `]d`…),
+plus `gd` (définition) défini dans `lua/config/keymaps.lua` — voir la section
+« Raccourcis clavier » ci-dessous.
 
 Les **formatters / linters** suivent le même principe :
 `lua/plugins/lsp/conform.lua` (`formatters_by_ft`) et
 `lua/plugins/lsp/nvim-lint.lua` (`linters_by_ft`) pour l'usage, et
 `lua/plugins/lsp/mason.lua` pour installer les binaires.
+
+## Raccourcis clavier
+
+`<leader>` = **Espace**. Tout est visible via `:WhichKey` (popup) ou
+**`<leader>fk`** (picker fzf-lua qui liste _tous_ les keymaps, builtins compris).
 
 ## Structure
 

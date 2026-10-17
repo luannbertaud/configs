@@ -11,7 +11,16 @@ return {
         { '<leader>fb', function() require('fzf-lua').buffers() end, desc = 'Buffers ouverts' },
         { '<leader>fr', function() require('fzf-lua').oldfiles() end, desc = 'Fichiers récents' },
         { '<leader>fh', function() require('fzf-lua').help_tags() end, desc = 'Aide (help tags)' },
-        { '<leader>fd', function() require('fzf-lua').diagnostics_document() end, desc = 'Diagnostics du buffer' },
+        {
+            '<leader>cd',
+            function() require('fzf-lua').diagnostics_document() end,
+            desc = 'Code : diagnostics du buffer',
+        },
+        {
+            '<leader>cD',
+            function() require('fzf-lua').diagnostics_workspace() end,
+            desc = 'Code : diagnostics du projet',
+        },
         { '<leader>fk', function() require('fzf-lua').keymaps() end, desc = 'Raccourcis (keymaps)' },
     },
     opts = {},

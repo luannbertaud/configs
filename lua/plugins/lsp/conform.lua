@@ -1,9 +1,17 @@
 -- Plugin : stevearc/conform.nvim — formatage (formatters externes + LSP).
--- Chargé quand : avant l'écriture d'un fichier (format on save).
+-- Chargé quand : avant l'écriture (format on save) ou au raccourci <leader>cf.
 return {
     'stevearc/conform.nvim',
     event = { 'BufWritePre' },
     cmd = { 'ConformInfo' },
+    keys = {
+        {
+            '<leader>cf',
+            function() require('conform').format({ async = true, lsp_format = 'fallback' }) end,
+            mode = { 'n', 'v' },
+            desc = 'Code : formater le buffer',
+        },
+    },
     opts = {
         formatters_by_ft = {
             lua = { 'stylua' },

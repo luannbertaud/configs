@@ -20,25 +20,6 @@ vim.api.nvim_create_autocmd('BufReadPost', {
     end,
 })
 
--- 3) Quand un serveur LSP s'attache à un buffer -----------------------------
---    On pose ici les raccourcis buffer-local liés au LSP.
-vim.api.nvim_create_autocmd('LspAttach', {
-    desc = 'Raccourcis LSP au moment de l’attachement',
-    group = vim.api.nvim_create_augroup('nvim_rc_lsp_attach', { clear = true }),
-    callback = function(event)
-        local function map(keys, func, desc)
-            vim.keymap.set('n', keys, func, { buffer = event.buf, desc = 'LSP: ' .. desc })
-        end
-
-        map('gd', vim.lsp.buf.definition, 'Définition')
-        map('gD', vim.lsp.buf.declaration, 'Déclaration')
-        map('gr', vim.lsp.buf.references, 'Références')
-        map('gi', vim.lsp.buf.implementation, 'Implémentation')
-        map('K', vim.lsp.buf.hover, 'Info au survol')
-        map('<leader>rn', vim.lsp.buf.rename, 'Renommer le symbole')
-        map('<leader>ca', vim.lsp.buf.code_action, 'Action de code')
-        map('<leader>d', vim.diagnostic.open_float, 'Diagnostic (fenêtre flottante)')
-        map('[d', function() vim.diagnostic.jump({ count = -1 }) end, 'Diagnostic précédent')
-        map(']d', function() vim.diagnostic.jump({ count = 1 }) end, 'Diagnostic suivant')
-    end,
-})
+-- 3) Raccourcis LSP -----------------------------------------------------------
+--    Plus rien ici : on s'appuie sur les DÉFAUTS de Neovim (gr*, K, ]d…) et le
+--    seul ajout (`gd`, définition) est global dans config/keymaps.lua.
