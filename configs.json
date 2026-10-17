@@ -1,0 +1,5 @@
+{
+  "desc": "Alias shell (bash/zsh)",
+  "target": "~/.config/aliases",
+  "prereq": ["curl"]
+}
