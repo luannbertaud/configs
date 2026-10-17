@@ -32,14 +32,22 @@ curl -fsSL .../run.sh | sh -s -- --install nvim
 | `configs --install <nom>`   | Installe (ou met à jour) une configuration                   |
 | `configs --install-missing` | Installe toutes les configurations manquantes                |
 | `configs --update [nom]`    | Met à jour une configuration, ou toutes si le nom est omis   |
+| `configs --uninstall <nom>` | Désinstalle une configuration                                |
 | `configs --version`         | Affiche la version                                           |
 
-Dans le TUI : `↑/↓` naviguer, `entrée` détails, `i` installer les manquants,
-`u` tout mettre à jour, `r` actualiser, `q` quitter.
+Dans le TUI : `↑/↓` sélectionner, `entrée`/`a` agir sur la sélection
+(installer ou mettre à jour), `d` supprimer (avec confirmation), `i` installer
+les manquants, `u` tout mettre à jour, `r` actualiser, `q` quitter. La fenêtre
+est centrée : la liste à gauche, le détail de la configuration sélectionnée à
+droite.
 
-**Hors périmètre :** la suppression (il n'y a jamais d'action destructive).
+La suppression passe par l'`install.sh --uninstall` de la branche s'il existe,
+sinon par la suppression du dossier cible (uniquement s'il s'agit d'un clone git
+géré par ce dépôt). Aucune suppression automatique : elle est toujours
+confirmée.
+
 Le déploiement éventuel hors `~/.config` (par ex. une disposition clavier vers
-`/usr/share/X11/xkb`) reste manuel.
+`/usr/share/X11/xkb`) reste manuel : `configs` ne gère que le dossier cible.
 
 ## Comment ça marche
 

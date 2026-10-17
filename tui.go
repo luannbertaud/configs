@@ -11,32 +11,34 @@ import (
 
 // Styles du TUI.
 var (
-	titleStyle   = lipgloss.NewStyle().Bold(true)
-	cursorStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	okStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	missingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	warnStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
-	dimStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	helpStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	errStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
-)
-
-type viewKind int
-
-const (
-	viewList viewKind = iota
-	viewDetail
+	titleStyle    = lipgloss.NewStyle().Bold(true)
+	subtitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	selectedStyle = lipgloss.NewStyle().Bold(true)
+	okStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	missingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	warnStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
+	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
+	errStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	keyStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
+	leftStyle     = lipgloss.NewStyle().Padding(0, 1)
+	rightStyle    = lipgloss.NewStyle().Padding(0, 1).Border(lipgloss.NormalBorder(), false, false, false, true)
+	confirmStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 3)
 )
 
 type model struct {
 	configs []Config
 	cursor  int
-	view    viewKind
+
+	width, height int
 
 	loading bool
 	busy    bool
 	status  string
 	err     error
+
+	confirm *Config // config dont la suppression attend confirmation
 }
 
 // messages.
@@ -71,6 +73,7 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 
 	case loadedMsg:
@@ -79,6 +82,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 		} else {
 			m.err = nil
+			m.status = ""
 			m.configs = msg.configs
 			m.clampCursor()
 		}
@@ -104,7 +108,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 
-	// Toujours pouvoir quitter.
+	// Confirmation de suppression en attente.
+	if m.confirm != nil {
+		switch key {
+		case "o", "y", "enter":
+			return m.runRemove()
+		case "n", "esc", "q", "ctrl+c":
+			m.confirm = nil
+		}
+		return m, nil
+	}
+
 	if key == "q" || key == "ctrl+c" {
 		return m, tea.Quit
 	}
@@ -114,83 +128,100 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch key {
 	case "up", "k":
-		if m.view == viewList {
-			m.moveCursor(-1)
-		}
+		m.moveCursor(-1)
 	case "down", "j":
-		if m.view == viewList {
-			m.moveCursor(1)
+		m.moveCursor(1)
+	case "enter", "a":
+		return m.actionSelected()
+	case "d":
+		if c := m.current(); c != nil {
+			if c.Installed {
+				m.confirm = c
+			} else {
+				m.err = fmt.Errorf("%s : rien à supprimer (absent)", c.Branch)
+			}
 		}
-	case "enter", "l":
-		if m.view == viewList && len(m.visible()) > 0 {
-			m.view = viewDetail
-		}
-	case "esc", "h":
-		if m.view == viewDetail {
-			m.view = viewList
-		}
+	case "i":
+		return m.globalAction(true)
+	case "u":
+		return m.globalAction(false)
 	case "r":
 		m.loading = true
+		m.err = nil
 		m.status = ""
 		return m, discoverCmd()
-	case "i", "u", "a":
-		return m.action(key)
 	}
 	return m, nil
 }
 
-// action prépare et lance l'installation/mise à jour (courante en vue détails,
-// globale en vue liste).
-func (m model) action(key string) (tea.Model, tea.Cmd) {
+// actionSelected installe ou met à jour la configuration sélectionnée.
+func (m model) actionSelected() (tea.Model, tea.Cmd) {
+	c := m.current()
+	if c == nil {
+		return m, nil
+	}
+	s, err := stepsFor(c)
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+	return m.exec([]step{s}, nil)
+}
+
+// globalAction installe les manquantes (missing=true) ou met à jour toutes les
+// installées (missing=false).
+func (m model) globalAction(missing bool) (tea.Model, tea.Cmd) {
 	var steps []step
 	var warns []string
-
-	if m.view == viewDetail {
-		c := m.current()
-		if c == nil {
-			return m, nil
+	for i := range m.configs {
+		c := &m.configs[i]
+		if c.Hidden {
+			continue
+		}
+		if missing == c.Installed {
+			continue
 		}
 		s, err := stepsFor(c)
 		if err != nil {
-			m.err = err
-			return m, nil
+			warns = append(warns, err.Error())
+			continue
 		}
-		steps = []step{s}
-	} else {
-		for i := range m.configs {
-			c := &m.configs[i]
-			if c.Hidden {
-				continue
-			}
-			if key == "i" && c.Installed {
-				continue
-			}
-			if key == "u" && !c.Installed {
-				continue
-			}
-			// En liste, "a" se comporte comme "u" (mettre à jour).
-			if key == "a" && !c.Installed {
-				continue
-			}
-			s, err := stepsFor(c)
-			if err != nil {
-				warns = append(warns, err.Error())
-				continue
-			}
-			steps = append(steps, s)
-		}
+		steps = append(steps, s)
 	}
+	return m.exec(steps, warns)
+}
 
-	if len(steps) == 0 {
-		if len(warns) > 0 {
-			m.err = fmt.Errorf("%s", strings.Join(warns, "\n"))
-		} else {
-			m.status = "rien à faire"
-		}
+// runRemove exécute la suppression confirmée.
+func (m model) runRemove() (tea.Model, tea.Cmd) {
+	c := m.confirm
+	m.confirm = nil
+	if c == nil {
 		return m, nil
 	}
+	s, err := removeStepFor(c)
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+	return m.exec([]step{s}, nil)
+}
 
-	path, cleanup, err := buildScript(steps)
+// exec lance les étapes (avec d'éventuels avertissements) via tea.ExecProcess.
+func (m model) exec(steps []step, warns []string) (tea.Model, tea.Cmd) {
+	all := make([]step, 0, len(steps)+len(warns))
+	for _, w := range warns {
+		all = append(all, step{
+			desc: "attention",
+			sh:   "printf '\\033[33m%s\\033[0m\\n' " + shq("attention : "+w),
+		})
+	}
+	all = append(all, steps...)
+
+	if len(all) == 0 {
+		m.status = "rien à faire"
+		return m, nil
+	}
+	path, cleanup, err := buildScript(all)
 	if err != nil {
 		m.err = err
 		return m, nil
@@ -250,46 +281,54 @@ func (m model) current() *Config {
 // ----- rendu ----------------------------------------------------------------
 
 func (m model) View() string {
-	switch {
-	case m.loading && len(m.configs) == 0:
-		return titleStyle.Render("configs") + "\n\n" + "Chargement des configurations…\n"
-	case m.view == viewDetail:
-		return m.detailView()
-	default:
-		return m.listView()
+	if m.width <= 0 {
+		m.width = 100
 	}
+	if m.height <= 0 {
+		m.height = 30
+	}
+	if m.confirm != nil {
+		return m.confirmView()
+	}
+
+	header := titleStyle.Render("configs") + subtitleStyle.Render("  —  "+repoSlug)
+
+	leftW := 34
+	rightW := m.width - leftW - 6
+	if rightW < 34 {
+		rightW = 34
+	}
+
+	left := leftStyle.Width(leftW).Render(m.leftPane())
+	right := rightStyle.Width(rightW).Render(m.rightPane())
+	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
+
+	content := lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", m.footer())
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, content)
 }
 
-func (m model) listView() string {
-	var b strings.Builder
-	b.WriteString(titleStyle.Render("configs"))
-	b.WriteString(dimStyle.Render("  —  " + repoSlug))
-	b.WriteString("\n\n")
-
+func (m model) leftPane() string {
 	vis := m.visible()
 	if len(vis) == 0 {
-		b.WriteString(dimStyle.Render("aucune configuration trouvée") + "\n")
+		return dimStyle.Render("aucune configuration")
 	}
+	var b strings.Builder
 	for i, ci := range vis {
 		c := m.configs[ci]
-		cursor := "  "
+		mark, _ := statusMark(&c)
 		if i == m.cursor {
-			cursor = cursorStyle.Render("> ")
+			fmt.Fprintf(&b, "%s %s\n", cursorStyle.Render("›"), mark+" "+selectedStyle.Render(c.label()))
+		} else {
+			fmt.Fprintf(&b, "  %s\n", mark+" "+c.label())
 		}
-		mark, word := statusMark(&c)
-		fmt.Fprintf(&b, "%s%s %-10s %-22s %s\n",
-			cursor, mark, c.label(), c.TargetPath, dimStyle.Render(word+"  "+c.Desc))
 	}
-
-	b.WriteString("\n")
-	b.WriteString(m.footer("↑/↓ naviguer · entrée détails · i installer les manquants · u tout mettre à jour · r actualiser · q quitter"))
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
-func (m model) detailView() string {
+func (m model) rightPane() string {
 	c := m.current()
 	if c == nil {
-		return m.listView()
+		return dimStyle.Render("Sélectionnez une configuration.")
 	}
 	var b strings.Builder
 	b.WriteString(titleStyle.Render(c.label()))
@@ -303,48 +342,87 @@ func (m model) detailView() string {
 	b.WriteString("\n")
 
 	mark, word := statusMark(c)
-	fmt.Fprintf(&b, "%s : %s  %s\n", titleStyle.Render("statut"), word, mark)
-	fmt.Fprintf(&b, "%s : %s\n", titleStyle.Render("cible"), c.TargetPath)
-	if c.GitManaged {
-		fmt.Fprintf(&b, "%s : git, branche %s\n", titleStyle.Render("gestion"), c.GitBranch)
-	}
+	fmt.Fprintf(&b, "%s %s %s\n", titleStyle.Render("statut   "), word, mark)
+	fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("cible    "), c.TargetPath)
+	fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("gestion  "), managementWord(c))
 	if c.Desync {
-		b.WriteString(warnStyle.Render("cible présente mais non gérée par git (désync) — intervention manuelle") + "\n")
+		b.WriteString(warnStyle.Render("désync : cible non gérée par git") + "\n")
 	}
 	if c.LastCommit != "" {
-		fmt.Fprintf(&b, "%s : %s\n", titleStyle.Render("dernier commit"), c.LastCommit)
+		fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("commit   "), c.LastCommit)
 	}
 	if len(c.Prereq) > 0 {
-		b.WriteString(titleStyle.Render("pré-requis") + " :")
-		for _, p := range c.Prereq {
-			mark := okStyle.Render("✓")
+		b.WriteString(titleStyle.Render("prérequis") + " ")
+		for i, p := range c.Prereq {
+			mk := okStyle.Render("✓")
 			if !c.Prereqs[p] {
-				mark = missingStyle.Render("✗")
+				mk = missingStyle.Render("✗")
 			}
-			b.WriteString(" " + p + mark)
+			if i > 0 {
+				b.WriteString("  ")
+			}
+			b.WriteString(p + mk)
 		}
 		b.WriteString("\n")
 	}
 
-	action := "installer"
-	if c.Installed {
-		action = "mettre à jour"
-	}
 	b.WriteString("\n")
-	b.WriteString(m.footer("a/i/u " + action + " · esc retour · q quitter"))
+	b.WriteString(m.actionsHint(c))
 	return b.String()
 }
 
-func (m model) footer(help string) string {
-	var b strings.Builder
-	if m.err != nil {
-		b.WriteString(errStyle.Render(m.err.Error()) + "\n")
+// managementWord décrit comment la configuration est (ou serait) gérée, git ou
+// install.sh — y compris quand elle n'est pas encore installée.
+func managementWord(c *Config) string {
+	switch {
+	case c.GitManaged && c.GitBranch != "":
+		return "dépôt git (branche " + c.GitBranch + ")"
+	case c.GitManaged:
+		return "dépôt git"
+	case c.HasInstall:
+		return "install.sh de la branche"
+	case c.Installed:
+		return "fichiers seuls"
+	default:
+		return "non installé"
 	}
-	if m.status != "" {
+}
+
+func (m model) actionsHint(c *Config) string {
+	var parts []string
+	if c.Installed {
+		parts = append(parts, keyStyle.Render("a")+" mettre à jour")
+		parts = append(parts, keyStyle.Render("d")+" supprimer")
+	} else {
+		parts = append(parts, keyStyle.Render("a")+" installer")
+	}
+	return dimStyle.Render("cette config :") + " " + strings.Join(parts, dimStyle.Render("  ·  "))
+}
+
+func (m model) footer() string {
+	var b strings.Builder
+	switch {
+	case m.err != nil:
+		b.WriteString(errStyle.Render(m.err.Error()) + "\n")
+	case m.loading:
+		b.WriteString(subtitleStyle.Render("actualisation…") + "\n")
+	case m.status != "":
 		b.WriteString(dimStyle.Render(m.status) + "\n")
 	}
-	b.WriteString(helpStyle.Render(help))
+	b.WriteString(helpStyle.Render("↑/↓ sélectionner · entrée/a agir · d supprimer · i installer les manquants · u tout mettre à jour · r actualiser · q quitter"))
 	return b.String()
+}
+
+func (m model) confirmView() string {
+	c := m.confirm
+	body := warnStyle.Render("Désinstaller "+c.label()+" ?") + "\n\n"
+	if c.HasInstall {
+		body += "Retrait via l'install.sh de la branche (--uninstall).\n"
+	} else {
+		body += "Suppression du dossier " + c.TargetPath + " (rm -rf).\n"
+	}
+	body += "\n" + keyStyle.Render("o") + " confirmer     " + keyStyle.Render("n") + " annuler"
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, confirmStyle.Render(body))
 }
 
 // statusMark renvoie l'icône et le mot d'état d'une config.

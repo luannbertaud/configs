@@ -275,6 +275,29 @@ func stepsFor(c *Config) (step, error) {
 	}
 }
 
+// removeStepFor construit l'étape de suppression d'une configuration :
+// délégation à `install.sh --uninstall` s'il existe, sinon suppression du
+// dossier cible quand c'est un clone git géré par ce dépôt.
+func removeStepFor(c *Config) (step, error) {
+	if !c.Installed {
+		return step{}, fmt.Errorf("%s : rien à supprimer (absent)", c.Branch)
+	}
+	if c.HasInstall {
+		url := fmt.Sprintf("%s/%s/%s", rawBase, c.Branch, installFile)
+		return step{
+			desc: "Désinstaller " + c.Branch + " (install.sh --uninstall)",
+			sh:   "curl -fsSL " + shq(url) + " | sh -s -- --uninstall",
+		}, nil
+	}
+	if c.GitManaged {
+		return step{
+			desc: "Désinstaller " + c.Branch,
+			sh:   "rm -rf -- " + shq(c.TargetPath),
+		}, nil
+	}
+	return step{}, fmt.Errorf("%s : %s non géré par git (désync) — suppression manuelle", c.Branch, c.TargetPath)
+}
+
 // buildScript écrit un script shell temporaire exécutant les étapes dans
 // l'ordre et renvoie son chemin ainsi qu'une fonction de nettoyage.
 func buildScript(steps []step) (string, func(), error) {

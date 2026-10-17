@@ -57,6 +57,22 @@ func main() {
 		if err := runSteps([]step{s}); err != nil {
 			fatal(err)
 		}
+	case opts.uninstall != "":
+		configs, err := discover()
+		if err != nil {
+			fatal(err)
+		}
+		c := findConfig(configs, opts.uninstall)
+		if c == nil {
+			fatal(fmt.Errorf("configuration inconnue: %s", opts.uninstall))
+		}
+		s, err := removeStepFor(c)
+		if err != nil {
+			fatal(err)
+		}
+		if err := runSteps([]step{s}); err != nil {
+			fatal(err)
+		}
 	case opts.updateSet:
 		configs, err := discover()
 		if err != nil {
@@ -111,6 +127,7 @@ type options struct {
 	list           bool
 	json           bool
 	install        string
+	uninstall      string
 	updateSet      bool
 	updateName     string
 	installMissing bool
@@ -142,6 +159,14 @@ func parseArgs(args []string) (options, error) {
 			o.install = args[i]
 		case len(a) > len("--install=") && a[:len("--install=")] == "--install=":
 			o.install = a[len("--install="):]
+		case a == "--uninstall":
+			i++
+			if i >= len(args) {
+				return o, errors.New("--uninstall requiert un nom de configuration")
+			}
+			o.uninstall = args[i]
+		case len(a) > len("--uninstall=") && a[:len("--uninstall=")] == "--uninstall=":
+			o.uninstall = a[len("--uninstall="):]
 		case a == "--update":
 			o.updateSet = true
 			if i+1 < len(args) && len(args[i+1]) > 0 && args[i+1][0] != '-' {
@@ -170,10 +195,11 @@ Usage :
   configs --install <nom>      installe une configuration (déjà installée : met à jour)
   configs --install-missing    installe toutes les configurations manquantes
   configs --update [nom]       met à jour une configuration, ou toutes si omis
+  configs --uninstall <nom>    désinstalle une configuration
   configs --version            affiche la version
 
-Le TUI propose : navigation ↑/↓, détails (entrée), installer les manquants (i),
-tout mettre à jour (u), actualiser (r), quitter (q).
+Le TUI propose : navigation ↑/↓, agir sur la sélection (entrée/a), supprimer (d),
+installer les manquants (i), tout mettre à jour (u), actualiser (r), quitter (q).
 `)
 }
 
