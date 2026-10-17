@@ -1,0 +1,7 @@
+{
+  "name": "aliases",
+  "description": "Alias shell (bash/zsh)",
+  "target": "~/.config/aliases",
+  "post_install": "scripts/post-install.sh",
+  "post_uninstall": "scripts/post-uninstall.sh"
+}

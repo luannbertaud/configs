@@ -1,14 +1,33 @@
 #!/bin/sh
 # Install or uninstall the aliases from github.com/luannbertaud/configs (branch: aliases).
+#
+# Standalone, downloads aliases.sh:
 #   curl -fsSL <raw>/install.sh | sh
 #   curl -fsSL <raw>/install.sh | sh -s -- --uninstall
+#
+# From a clone, or via the `configs` package manager, uses the local aliases.sh:
+#   ./install.sh
+#   ./install.sh --uninstall
 set -eu
 
 URL="https://raw.githubusercontent.com/luannbertaud/configs/aliases/aliases.sh"
-DIR="${XDG_CONFIG_HOME:-$HOME/.config}/aliases"
+DIR="${CONFIGS_TARGET:-${XDG_CONFIG_HOME:-$HOME/.config}/aliases}"
 FILE="$DIR/aliases.sh"
 MARKER="# Aliases from github.com/luannbertaud/configs (branch: aliases)"
 LINE="[ -f \"$FILE\" ] && . \"$FILE\""
+
+# Local mode when the package manager provides CONFIGS_TARGET, or when
+# install.sh sits next to aliases.sh (running from a clone).
+SELF_DIR=""
+case "$0" in
+    *install.sh)
+        SELF_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || SELF_DIR=""
+        ;;
+esac
+LOCAL=0
+if [ -n "${CONFIGS_TARGET:-}" ] || { [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/aliases.sh" ]; }; then
+    LOCAL=1
+fi
 
 # Existing rc files, or ~/.bashrc if there is none.
 rc_files() {
@@ -20,10 +39,15 @@ rc_files() {
 }
 
 install() {
-    mkdir -p "$DIR"
-    curl -fsSL "$URL" -o "$FILE.tmp"
-    mv "$FILE.tmp" "$FILE"
-    echo "Downloaded $FILE"
+    if [ "$LOCAL" = 1 ]; then
+        [ -f "$FILE" ] || { echo "aliases: $FILE not found" >&2; exit 1; }
+        echo "Using $FILE"
+    else
+        mkdir -p "$DIR"
+        curl -fsSL "$URL" -o "$FILE.tmp"
+        mv "$FILE.tmp" "$FILE"
+        echo "Downloaded $FILE"
+    fi
 
     for rc in $(rc_files); do
         if [ -f "$rc" ] && grep -qxF "$MARKER" "$rc"; then
@@ -53,8 +77,11 @@ uninstall() {
         echo "Removed source line from $rc"
     done
 
-    rm -f "$FILE"
-    rmdir "$DIR" 2>/dev/null && echo "Removed $DIR" || true
+    # In a clone, the package manager removes the directory itself.
+    if [ "$LOCAL" = 0 ]; then
+        rm -f "$FILE"
+        rmdir "$DIR" 2>/dev/null && echo "Removed $DIR" || true
+    fi
     echo "Uninstalled (aliases stay defined in already open shells)"
 }
 
