@@ -1,0 +1,4 @@
+# Binaires et artefacts de build.
+/configs
+/configs.exe
+/dist/
