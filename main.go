@@ -98,6 +98,9 @@ func main() {
 		if p == nil {
 			fatal(fmt.Errorf("paquet inconnu: %s", opts.uninstall))
 		}
+		if !p.Managed {
+			fmt.Fprintf(os.Stderr, "configs: attention: %s n'est pas géré, suppression brute sans script\n", p.Branch)
+		}
 		steps, err := uninstallSteps(p)
 		if err != nil {
 			fatal(err)

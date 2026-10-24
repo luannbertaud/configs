@@ -458,10 +458,12 @@ func (m model) footer() string {
 func (m model) confirmView() string {
 	p := m.confirm
 	body := warnStyle.Render("Désinstaller "+p.label()+" ?") + "\n\n"
-	if p.PostUninstall != "" {
+	if p.PostUninstall != "" && p.Managed {
 		body += "Le script post_uninstall sera exécuté, puis le dossier sera retiré.\n"
-	} else {
+	} else if p.Managed {
 		body += "Le dossier " + p.TargetPath + " sera supprimé (rm -rf).\n"
+	} else {
+		body += "Dossier non géré : suppression brute de " + p.TargetPath + " (rm -rf),\nsans exécuter de script.\n"
 	}
 	body += "\n" + keyStyle.Render("o") + " confirmer     " + keyStyle.Render("n") + " annuler"
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, confirmStyle.Render(body))
