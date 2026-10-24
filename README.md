@@ -117,5 +117,5 @@ go vet ./...
 gofmt -l .
 ```
 
-Une release est publiée en poussant un tag `v*` (workflow
+Une release est publiée en poussant n'importe quel tag (workflow
 `.github/workflows/release.yml`).

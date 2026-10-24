@@ -1,12 +1,12 @@
 name: Release
 
 # Compile les binaires multiplateformes et les publie dans une GitHub Release à
-# chaque tag de version (ex. v1.2.3). Les assets sont nommés
-# `configs_<os>_<arch>` pour que run.sh puisse les télécharger directement.
+# chaque tag, quel que soit son nom (ex. v1.2.3, 2026.10, test). Les assets sont
+# nommés `configs_<os>_<arch>` pour que run.sh puisse les télécharger directement.
 on:
   push:
     tags:
-      - "v*"
+      - "**"
 
 permissions:
   contents: write
