@@ -3,193 +3,206 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
-	"time"
 )
 
-// Emplacement du dépôt et des fichiers servis en brut.
-const (
-	repoSlug     = "luannbertaud/configs"
-	repoURL      = "https://github.com/luannbertaud/configs.git"
-	rawBase      = "https://raw.githubusercontent.com/luannbertaud/configs"
-	manifestFile = "configs.json"
-	installFile  = "install.sh"
+// Emplacement du dépôt (codé en dur) et du manifeste porté par chaque branche.
+// repoSlug/repoURL sont des variables pour pouvoir être remplacées au build de
+// test (go build -ldflags "-X main.repoURL=...").
+var (
+	repoSlug = "luannbertaud/configs"
+	repoURL  = "https://github.com/luannbertaud/configs.git"
 )
 
-// Manifest est le descripteur d'une branche config, lu depuis configs.json à la
-// racine de la branche.
+const manifestFile = "manifest.json"
+
+// Manifest est le descripteur d'un paquet, lu depuis manifest.json à la racine
+// de sa branche.
 type Manifest struct {
-	Name   string   `json:"name,omitempty"`
-	Desc   string   `json:"desc"`
-	Target string   `json:"target"`
-	Prereq []string `json:"prereq,omitempty"`
-	Hidden bool     `json:"hidden,omitempty"`
+	Name          string   `json:"name,omitempty"`
+	Description   string   `json:"description"`
+	Target        string   `json:"target"`
+	Prereq        []string `json:"prereq,omitempty"`
+	PostInstall   string   `json:"post_install,omitempty"`
+	PostUninstall string   `json:"post_uninstall,omitempty"`
+	Hidden        bool     `json:"hidden,omitempty"`
 }
 
-// Config est un manifeste enrichi de l'état de la machine courante.
-type Config struct {
+// State décrit l'état d'un paquet sur la machine.
+type State string
+
+const (
+	StateAbsent   State = "absent"
+	StateDesync   State = "desync"
+	StateUpdate   State = "update"
+	StateUpToDate State = "uptodate"
+)
+
+// Package est un manifeste enrichi de l'état local.
+type Package struct {
 	Branch string
 	Manifest
 
 	TargetPath string
-	Installed  bool            // le dossier cible existe
-	GitManaged bool            // clone git dont l'origin est ce dépôt
-	GitBranch  string          // branche actuellement extraite dans la cible
-	Desync     bool            // cible présente mais pas un clone de la branche
-	HasInstall bool            // la branche embarque un install.sh
-	Prereqs    map[string]bool // commande -> présente ?
+	RemoteTip  string
+
+	Installed  bool
+	Managed    bool
+	Head       string
 	LastCommit string
+	Prereqs    map[string]bool
+
+	State State
 }
 
 // label renvoie le nom affiché (name du manifeste, sinon la branche).
-func (c *Config) label() string {
-	if c.Name != "" {
-		return c.Name
+func (p *Package) label() string {
+	if p.Name != "" {
+		return p.Name
 	}
-	return c.Branch
+	return p.Branch
 }
 
-// listBranches énumère les branches distantes via `git ls-remote --heads`.
-func listBranches() ([]string, error) {
-	out, err := exec.Command("git", "ls-remote", "--heads", repoURL).Output()
+// ----- découverte -----------------------------------------------------------
+
+// discover récupère un clone partiel éphémère de toutes les branches (un seul
+// commit par branche, sans blobs), lit les manifestes à la demande puis calcule
+// l'état de chaque paquet sur cette machine.
+func discover() ([]Package, error) {
+	dir, cleanup, err := cloneMeta()
 	if err != nil {
-		return nil, fmt.Errorf("git ls-remote: %w", err)
+		return nil, err
 	}
-	var branches []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	defer cleanup()
+
+	tips, err := branchTips(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	var pkgs []Package
+	for branch, tip := range tips {
+		// Vérifie l'existence du manifeste dans l'arbre (déjà présent avec
+		// --filter=blob:none) sans récupérer son contenu.
+		has, _ := gitOut(dir, "ls-tree", "--name-only", "origin/"+branch, "--", manifestFile)
+		if strings.TrimSpace(has) == "" {
+			continue
+		}
+		data, err := gitOut(dir, "cat-file", "-p", "origin/"+branch+":"+manifestFile)
+		if err != nil {
+			continue
+		}
+		var m Manifest
+		if err := json.Unmarshal([]byte(data), &m); err != nil {
+			continue // manifeste illisible : on ignore la branche
+		}
+		if strings.TrimSpace(m.Target) == "" {
+			continue // manifeste invalide : cible obligatoire
+		}
+		p := Package{Branch: branch, Manifest: m, RemoteTip: tip}
+		p.inspect()
+		pkgs = append(pkgs, p)
+	}
+	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].Branch < pkgs[j].Branch })
+	return pkgs, nil
+}
+
+// cloneMeta crée un clone partiel et éphémère de toutes les branches :
+// --depth 1 (un commit), --no-single-branch (toutes les branches),
+// --filter=blob:none (contenu des fichiers à la demande), --no-checkout.
+// Repli sans filtre si le serveur ne le supporte pas.
+func cloneMeta() (string, func(), error) {
+	dir, err := os.MkdirTemp("", "configs-meta-*")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { os.RemoveAll(dir) }
+
+	clone := func(extra ...string) error {
+		args := []string{"clone", "--quiet", "--depth", "1", "--no-single-branch", "--no-checkout"}
+		args = append(args, extra...)
+		args = append(args, repoURL, dir)
+		cmd := exec.Command("git", args...)
+		cmd.Stderr = nil
+		return cmd.Run()
+	}
+
+	if err := clone("--filter=blob:none"); err != nil {
+		// Certains serveurs refusent le filtre partiel : on retente sans.
+		os.RemoveAll(dir)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", nil, err
+		}
+		if err := clone(); err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("découverte des paquets: %w", err)
+		}
+	}
+	return dir, cleanup, nil
+}
+
+// branchTips renvoie, pour chaque branche distante, le SHA de son tip.
+func branchTips(dir string) (map[string]string, error) {
+	out, err := gitOut(dir, "for-each-ref", "--format=%(refname:short) %(objectname)", "refs/remotes/origin")
+	if err != nil {
+		return nil, fmt.Errorf("liste des branches: %w", err)
+	}
+	tips := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) != 2 {
 			continue
 		}
-		if ref, ok := strings.CutPrefix(fields[1], "refs/heads/"); ok {
-			branches = append(branches, ref)
-		}
-	}
-	return branches, nil
-}
-
-// fetchManifest télécharge le configs.json d'une branche. Il renvoie (nil, nil)
-// quand la branche n'en a pas (ce n'est donc pas une branche config).
-func fetchManifest(client *http.Client, branch string) (*Manifest, error) {
-	url := fmt.Sprintf("%s/%s/%s", rawBase, branch, manifestFile)
-	resp, err := client.Get(url)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	switch resp.StatusCode {
-	case http.StatusOK:
-		var m Manifest
-		if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
-			return nil, fmt.Errorf("%s: %w", url, err)
-		}
-		return &m, nil
-	case http.StatusNotFound:
-		return nil, nil
-	default:
-		return nil, fmt.Errorf("%s: HTTP %d", url, resp.StatusCode)
-	}
-}
-
-// remoteExists teste l'existence d'un fichier servi en brut (HEAD).
-func remoteExists(client *http.Client, url string) bool {
-	req, err := http.NewRequest(http.MethodHead, url, nil)
-	if err != nil {
-		return false
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false
-	}
-	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
-}
-
-// discover liste les branches, ne garde que celles portant un configs.json et
-// renvoie leur état sur cette machine, trié par nom de branche.
-func discover() ([]Config, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
-
-	branches, err := listBranches()
-	if err != nil {
-		return nil, err
-	}
-
-	type result struct {
-		cfg *Config
-		err error
-	}
-	results := make([]result, len(branches))
-	var wg sync.WaitGroup
-	for i, branch := range branches {
-		wg.Add(1)
-		go func(i int, branch string) {
-			defer wg.Done()
-			m, err := fetchManifest(client, branch)
-			if err != nil {
-				results[i] = result{nil, err}
-				return
-			}
-			if m == nil {
-				return // pas une branche config
-			}
-			c := &Config{Branch: branch, Manifest: *m}
-			c.inspect(client)
-			results[i] = result{c, nil}
-		}(i, branch)
-	}
-	wg.Wait()
-
-	var configs []Config
-	var errs []string
-	for _, r := range results {
-		if r.err != nil {
-			errs = append(errs, r.err.Error())
+		branch, ok := strings.CutPrefix(fields[0], "origin/")
+		if !ok || branch == "HEAD" || strings.Contains(branch, "->") {
 			continue
 		}
-		if r.cfg != nil {
-			configs = append(configs, *r.cfg)
-		}
+		tips[branch] = fields[1]
 	}
-	sort.Slice(configs, func(i, j int) bool { return configs[i].Branch < configs[j].Branch })
-
-	if len(configs) == 0 && len(errs) > 0 {
-		return nil, fmt.Errorf("découverte impossible: %s", strings.Join(errs, "; "))
-	}
-	return configs, nil
+	return tips, nil
 }
 
-// inspect renseigne l'état local (cible, git, install.sh, pré-requis).
-func (c *Config) inspect(client *http.Client) {
-	c.TargetPath = expandTarget(c.Target)
-	c.Prereqs = map[string]bool{}
-	for _, p := range c.Prereq {
-		_, err := exec.LookPath(p)
-		c.Prereqs[p] = err == nil
+// inspect renseigne l'état local du paquet.
+func (p *Package) inspect() {
+	p.TargetPath = expandTarget(p.Target)
+	p.Prereqs = map[string]bool{}
+	for _, c := range p.Prereq {
+		_, err := exec.LookPath(c)
+		p.Prereqs[c] = err == nil
 	}
 
-	if fi, err := os.Stat(c.TargetPath); err == nil && fi.IsDir() {
-		c.Installed = true
-		if isGitWorktree(c.TargetPath) && originIsRepo(c.TargetPath) {
-			c.GitManaged = true
-			if out, err := gitOut(c.TargetPath, "branch", "--show-current"); err == nil {
-				c.GitBranch = strings.TrimSpace(out)
-			}
-			if out, err := gitOut(c.TargetPath, "log", "-1", "--format=%h %s"); err == nil {
-				c.LastCommit = strings.TrimSpace(out)
-			}
-		} else {
-			c.Desync = true
-		}
+	fi, err := os.Stat(p.TargetPath)
+	if err != nil || !fi.IsDir() {
+		p.State = StateAbsent
+		return
+	}
+	p.Installed = true
+
+	if !isGitWorktree(p.TargetPath) || !originMatches(p.TargetPath) || currentBranch(p.TargetPath) != p.Branch {
+		p.State = StateDesync
+		return
 	}
 
-	c.HasInstall = remoteExists(client, fmt.Sprintf("%s/%s/%s", rawBase, c.Branch, installFile))
+	p.Managed = true
+	if h, err := gitOut(p.TargetPath, "rev-parse", "HEAD"); err == nil {
+		p.Head = strings.TrimSpace(h)
+	}
+	if out, err := gitOut(p.TargetPath, "log", "-1", "--format=%h %s"); err == nil {
+		p.LastCommit = strings.TrimSpace(out)
+	}
+	if isDirty(p.TargetPath) {
+		p.State = StateDesync
+		return
+	}
+	if p.Head != "" && p.Head != p.RemoteTip {
+		p.State = StateUpdate
+		return
+	}
+	p.State = StateUpToDate
 }
 
 func isGitWorktree(dir string) bool {
@@ -197,13 +210,29 @@ func isGitWorktree(dir string) bool {
 	return err == nil && strings.TrimSpace(out) == "true"
 }
 
-func originIsRepo(dir string) bool {
+// originMatches accepte les URLs SSH et HTTPS du dépôt (l'origin n'est jamais
+// utilisé pour les opérations, seulement pour classifier le dossier).
+func originMatches(dir string) bool {
 	out, err := gitOut(dir, "remote", "get-url", "origin")
 	if err != nil {
 		return false
 	}
-	u := strings.TrimSpace(out)
-	return u == repoURL || strings.Contains(u, repoSlug)
+	return strings.Contains(strings.TrimSpace(out), repoSlug)
+}
+
+func currentBranch(dir string) string {
+	out, err := gitOut(dir, "branch", "--show-current")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// isDirty ne regarde que les fichiers suivis (les fichiers générés non suivis
+// sont ignorés).
+func isDirty(dir string) bool {
+	out, err := gitOut(dir, "status", "--porcelain", "--untracked-files=no")
+	return err == nil && strings.TrimSpace(out) != ""
 }
 
 func gitOut(dir string, args ...string) (string, error) {
@@ -242,64 +271,94 @@ type step struct {
 	sh   string
 }
 
-// stepsFor construit l'étape d'installation ou de mise à jour d'une config :
-// délégation au install.sh de la branche s'il existe, sinon git.
-func stepsFor(c *Config) (step, error) {
-	switch {
-	case c.HasInstall:
-		label := "Installer " + c.Branch
-		if c.Installed {
-			label = "Mettre à jour " + c.Branch
+// installSteps installe un paquet absent (clone mono-branche de la branche
+// complète) puis exécute son post_install.
+func installSteps(p *Package) ([]step, error) {
+	if p.State != StateAbsent {
+		return updateSteps(p)
+	}
+	if err := os.MkdirAll(filepath.Dir(p.TargetPath), 0o755); err != nil {
+		return nil, err
+	}
+	steps := []step{{
+		desc: "Installer " + p.Branch,
+		sh: fmt.Sprintf("git clone --single-branch --branch %s %s %s",
+			shq(p.Branch), shq(repoURL), shq(p.TargetPath)),
+	}}
+	if p.PostInstall != "" {
+		steps = append(steps, postInstallStep(p, ""))
+	}
+	return steps, nil
+}
+
+// updateSteps met à jour un paquet (pull --ff-only via l'URL canonique) puis
+// exécute son post_install si HEAD a changé.
+func updateSteps(p *Package) ([]step, error) {
+	switch p.State {
+	case StateAbsent:
+		return installSteps(p)
+	case StateUpToDate:
+		return nil, nil
+	case StateUpdate:
+		steps := []step{{
+			desc: "Mettre à jour " + p.Branch,
+			sh: fmt.Sprintf("( cd %s && git pull --ff-only %s %s )",
+				shq(p.TargetPath), shq(repoURL), shq(p.Branch)),
+		}}
+		if p.PostInstall != "" {
+			steps = append(steps, postInstallStep(p, p.Head))
 		}
-		url := fmt.Sprintf("%s/%s/%s", rawBase, c.Branch, installFile)
-		return step{desc: label + " (install.sh)", sh: "curl -fsSL " + shq(url) + " | sh"}, nil
-
-	case !c.Installed:
-		if err := os.MkdirAll(filepath.Dir(c.TargetPath), 0o755); err != nil {
-			return step{}, err
-		}
-		return step{
-			desc: "Installer " + c.Branch,
-			sh: fmt.Sprintf("git clone --branch %s --single-branch %s %s",
-				shq(c.Branch), shq(repoURL), shq(c.TargetPath)),
-		}, nil
-
-	case c.GitManaged:
-		return step{
-			desc: "Mettre à jour " + c.Branch,
-			sh:   fmt.Sprintf("git -C %s pull --ff-only", shq(c.TargetPath)),
-		}, nil
-
+		return steps, nil
 	default:
-		return step{}, fmt.Errorf("%s : %s existe mais n'est pas géré par git (désync)", c.Branch, c.TargetPath)
+		return nil, fmt.Errorf("%s : état %s, mise à jour impossible", p.Branch, p.State)
 	}
 }
 
-// removeStepFor construit l'étape de suppression d'une configuration :
-// délégation à `install.sh --uninstall` s'il existe, sinon suppression du
-// dossier cible quand c'est un clone git géré par ce dépôt.
-func removeStepFor(c *Config) (step, error) {
-	if !c.Installed {
-		return step{}, fmt.Errorf("%s : rien à supprimer (absent)", c.Branch)
+// uninstallSteps exécute post_uninstall (s'il existe dans la cible) puis retire
+// le dossier cible.
+func uninstallSteps(p *Package) ([]step, error) {
+	if !p.Installed {
+		return nil, fmt.Errorf("%s : rien à supprimer (absent)", p.Branch)
 	}
-	if c.HasInstall {
-		url := fmt.Sprintf("%s/%s/%s", rawBase, c.Branch, installFile)
-		return step{
-			desc: "Désinstaller " + c.Branch + " (install.sh --uninstall)",
-			sh:   "curl -fsSL " + shq(url) + " | sh -s -- --uninstall",
-		}, nil
+	var steps []step
+	if p.PostUninstall != "" {
+		steps = append(steps, step{
+			desc: "post-uninstall " + p.Branch,
+			sh: fmt.Sprintf("if [ -f %s ]; then ( cd %s && CONFIGS_TARGET=%s sh %s ); fi",
+				shq(filepath.Join(p.TargetPath, p.PostUninstall)),
+				shq(p.TargetPath), shq(p.TargetPath), shq(p.PostUninstall)),
+		})
 	}
-	if c.GitManaged {
-		return step{
-			desc: "Désinstaller " + c.Branch,
-			sh:   "rm -rf -- " + shq(c.TargetPath),
-		}, nil
+	steps = append(steps, step{
+		desc: "Désinstaller " + p.Branch,
+		sh:   "rm -rf -- " + shq(p.TargetPath),
+	})
+	return steps, nil
+}
+
+// postInstallStep exécute post_install avec cwd = cible. Si prev est fourni
+// (update), l'étape n'est exécutée que si HEAD a changé. CONFIGS_COMMIT est lu
+// après l'opération pour rester exact.
+func postInstallStep(p *Package, prev string) step {
+	env := fmt.Sprintf(`CONFIGS_TARGET=%s CONFIGS_COMMIT="$(git -C %s rev-parse HEAD)"`,
+		shq(p.TargetPath), shq(p.TargetPath))
+	if prev != "" {
+		env += " CONFIGS_PREV=" + shq(prev)
 	}
-	return step{}, fmt.Errorf("%s : %s non géré par git (désync) — suppression manuelle", c.Branch, c.TargetPath)
+	body := fmt.Sprintf("( cd %s && %s sh %s )", shq(p.TargetPath), env, shq(p.PostInstall))
+	if prev != "" {
+		body = fmt.Sprintf("if [ %s != \"$(git -C %s rev-parse HEAD)\" ]; then %s; fi",
+			shq(prev), shq(p.TargetPath), body)
+	}
+	return step{
+		desc: "post-install " + p.Branch,
+		sh:   body,
+	}
 }
 
 // buildScript écrit un script shell temporaire exécutant les étapes dans
-// l'ordre et renvoie son chemin ainsi qu'une fonction de nettoyage.
+// l'ordre, en journalisant la commande exacte, et renvoie son chemin ainsi
+// qu'une fonction de nettoyage.
 func buildScript(steps []step) (string, func(), error) {
 	dir, err := os.MkdirTemp("", "configs-*")
 	if err != nil {
@@ -310,7 +369,6 @@ func buildScript(steps []step) (string, func(), error) {
 	var b strings.Builder
 	b.WriteString("#!/bin/sh\nset -eu\n")
 	for _, s := range steps {
-		// Bannière de l'étape, puis la commande exacte qui va être exécutée.
 		fmt.Fprintf(&b, "\nprintf '\\n\\033[1;36m=== %%s ===\\033[0m\\n' %s\n", shq(s.desc))
 		fmt.Fprintf(&b, "printf '\\033[2m$ %%s\\033[0m\\n' %s\n", shq(s.sh))
 		b.WriteString(s.sh)
@@ -330,11 +388,11 @@ func shq(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// findConfig retrouve une config par nom de branche.
-func findConfig(configs []Config, name string) *Config {
-	for i := range configs {
-		if configs[i].Branch == name || configs[i].Name == name {
-			return &configs[i]
+// findPackage retrouve un paquet par nom de branche ou nom affiché.
+func findPackage(pkgs []Package, name string) *Package {
+	for i := range pkgs {
+		if pkgs[i].Branch == name || pkgs[i].Name == name {
+			return &pkgs[i]
 		}
 	}
 	return nil

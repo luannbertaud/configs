@@ -1,6 +1,6 @@
-// Command configs gère, depuis une seule branche main, les configurations
-// versionnées du dépôt luannbertaud/configs : il liste celles qui sont
-// installées sur la machine, les met à jour et installe les manquantes.
+// Command configs gère les paquets du dépôt luannbertaud/configs : chaque
+// branche portant un manifest.json est un paquet installé comme un clone git
+// mono-branche et éventuellement finalisé par un script post_install.
 package main
 
 import (
@@ -32,87 +32,86 @@ func main() {
 
 	switch {
 	case opts.list:
-		configs, err := discover()
+		pkgs, err := discover()
 		if err != nil {
 			fatal(err)
 		}
 		if opts.json {
-			printJSON(configs)
+			printJSON(pkgs)
 		} else {
-			printList(configs)
+			printList(pkgs)
 		}
 	case opts.install != "":
-		configs, err := discover()
+		pkgs, err := discover()
 		if err != nil {
 			fatal(err)
 		}
-		c := findConfig(configs, opts.install)
-		if c == nil {
-			fatal(fmt.Errorf("configuration inconnue: %s", opts.install))
+		p := findPackage(pkgs, opts.install)
+		if p == nil {
+			fatal(fmt.Errorf("paquet inconnu: %s", opts.install))
 		}
-		s, err := stepsFor(c)
+		steps, err := installSteps(p)
 		if err != nil {
 			fatal(err)
 		}
-		if err := runSteps([]step{s}); err != nil {
+		if err := runSteps(steps); err != nil {
 			fatal(err)
 		}
-	case opts.uninstall != "":
-		configs, err := discover()
+	case opts.installMissing:
+		pkgs, err := discover()
 		if err != nil {
 			fatal(err)
 		}
-		c := findConfig(configs, opts.uninstall)
-		if c == nil {
-			fatal(fmt.Errorf("configuration inconnue: %s", opts.uninstall))
-		}
-		s, err := removeStepFor(c)
-		if err != nil {
-			fatal(err)
-		}
-		if err := runSteps([]step{s}); err != nil {
+		steps, warns := collectMissing(pkgs)
+		if err := runSteps(steps, warns...); err != nil {
 			fatal(err)
 		}
 	case opts.updateSet:
-		configs, err := discover()
+		pkgs, err := discover()
 		if err != nil {
 			fatal(err)
 		}
 		if opts.updateName != "" {
-			c := findConfig(configs, opts.updateName)
-			if c == nil {
-				fatal(fmt.Errorf("configuration inconnue: %s", opts.updateName))
+			p := findPackage(pkgs, opts.updateName)
+			if p == nil {
+				fatal(fmt.Errorf("paquet inconnu: %s", opts.updateName))
 			}
-			s, err := stepsFor(c)
+			steps, err := updateSteps(p)
 			if err != nil {
 				fatal(err)
 			}
-			if err := runSteps([]step{s}); err != nil {
+			if err := runSteps(steps); err != nil {
 				fatal(err)
 			}
 			return
 		}
-		steps, warns := collectUpdate(configs)
+		steps, warns := collectUpdate(pkgs)
 		if err := runSteps(steps, warns...); err != nil {
 			fatal(err)
 		}
-	case opts.installMissing:
-		configs, err := discover()
+	case opts.uninstall != "":
+		pkgs, err := discover()
 		if err != nil {
 			fatal(err)
 		}
-		steps, warns := collectMissing(configs)
-		if err := runSteps(steps, warns...); err != nil {
+		p := findPackage(pkgs, opts.uninstall)
+		if p == nil {
+			fatal(fmt.Errorf("paquet inconnu: %s", opts.uninstall))
+		}
+		steps, err := uninstallSteps(p)
+		if err != nil {
+			fatal(err)
+		}
+		if err := runSteps(steps); err != nil {
 			fatal(err)
 		}
 	default:
 		if !isTerminal() {
-			// Sans TTY (pipe), on retombe sur la liste.
-			configs, err := discover()
+			pkgs, err := discover()
 			if err != nil {
 				fatal(err)
 			}
-			printList(configs)
+			printList(pkgs)
 			return
 		}
 		if err := runTUI(); err != nil {
@@ -154,7 +153,7 @@ func parseArgs(args []string) (options, error) {
 		case a == "--install":
 			i++
 			if i >= len(args) {
-				return o, errors.New("--install requiert un nom de configuration")
+				return o, errors.New("--install requiert un nom de paquet")
 			}
 			o.install = args[i]
 		case len(a) > len("--install=") && a[:len("--install=")] == "--install=":
@@ -162,7 +161,7 @@ func parseArgs(args []string) (options, error) {
 		case a == "--uninstall":
 			i++
 			if i >= len(args) {
-				return o, errors.New("--uninstall requiert un nom de configuration")
+				return o, errors.New("--uninstall requiert un nom de paquet")
 			}
 			o.uninstall = args[i]
 		case len(a) > len("--uninstall=") && a[:len("--uninstall=")] == "--uninstall=":
@@ -187,17 +186,22 @@ func parseArgs(args []string) (options, error) {
 }
 
 func printUsage(w *os.File) {
-	fmt.Fprint(w, `configs — gère les configurations du dépôt luannbertaud/configs.
+	fmt.Fprint(w, `configs — gère les paquets du dépôt luannbertaud/configs.
+
+Chaque branche portant un manifest.json est un paquet. Les paquets sont
+installés comme des clones git mono-branche (branche complète, sans les autres
+branches).
 
 Usage :
   configs                      lance le TUI interactif
-  configs --list [--json]      liste les configurations et leur état
-  configs --install <nom>      installe une configuration (déjà installée : met à jour)
-  configs --install-missing    installe toutes les configurations manquantes
-  configs --update [nom]       met à jour une configuration, ou toutes si omis
-  configs --uninstall <nom>    désinstalle une configuration
+  configs --list [--json]      liste les paquets et leur état
+  configs --install <nom>      installe un paquet (ou le met à jour)
+  configs --install-missing    installe tous les paquets absents
+  configs --update [nom]       met à jour un paquet, ou tous ceux à jour à faire
+  configs --uninstall <nom>    désinstalle un paquet
   configs --version            affiche la version
 
+États : absent · désync · à update · à jour.
 Le TUI propose : navigation ↑/↓, agir sur la sélection (entrée/a), supprimer (d),
 installer les manquants (i), tout mettre à jour (u), actualiser (r), quitter (q).
 `)
@@ -205,37 +209,40 @@ installer les manquants (i), tout mettre à jour (u), actualiser (r), quitter (q
 
 // ----- sorties --------------------------------------------------------------
 
-func printList(configs []Config) {
+func printList(pkgs []Package) {
 	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "NOM\tÉTAT\tCIBLE\tDESCRIPTION")
-	for _, c := range configs {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", c.label(), statusWord(&c), c.TargetPath, c.Desc)
+	for _, p := range pkgs {
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", p.label(), stateWord(p.State), p.TargetPath, p.Description)
 	}
 	tw.Flush()
-	if len(configs) == 0 {
-		fmt.Fprintln(os.Stderr, "configs: aucune configuration trouvée")
+	if len(pkgs) == 0 {
+		fmt.Fprintln(os.Stderr, "configs: aucun paquet trouvé")
 	}
 }
 
-func printJSON(configs []Config) {
+func printJSON(pkgs []Package) {
 	type row struct {
-		Branch     string          `json:"branch"`
-		Name       string          `json:"name"`
-		Desc       string          `json:"desc"`
-		Target     string          `json:"target"`
-		Installed  bool            `json:"installed"`
-		GitManaged bool            `json:"git_managed"`
-		GitBranch  string          `json:"git_branch,omitempty"`
-		Desync     bool            `json:"desync"`
-		Hidden     bool            `json:"hidden"`
-		Prereq     map[string]bool `json:"prereq,omitempty"`
+		Branch      string          `json:"branch"`
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Target      string          `json:"target"`
+		State       string          `json:"state"`
+		Installed   bool            `json:"installed"`
+		Managed     bool            `json:"managed"`
+		Head        string          `json:"head,omitempty"`
+		RemoteTip   string          `json:"remote_tip,omitempty"`
+		Hidden      bool            `json:"hidden"`
+		PostInstall string          `json:"post_install,omitempty"`
+		Prereq      map[string]bool `json:"prereq,omitempty"`
 	}
-	out := make([]row, 0, len(configs))
-	for _, c := range configs {
+	out := make([]row, 0, len(pkgs))
+	for _, p := range pkgs {
 		out = append(out, row{
-			Branch: c.Branch, Name: c.label(), Desc: c.Desc, Target: c.TargetPath,
-			Installed: c.Installed, GitManaged: c.GitManaged, GitBranch: c.GitBranch,
-			Desync: c.Desync, Hidden: c.Hidden, Prereq: c.Prereqs,
+			Branch: p.Branch, Name: p.label(), Description: p.Description,
+			Target: p.TargetPath, State: string(p.State), Installed: p.Installed,
+			Managed: p.Managed, Head: p.Head, RemoteTip: p.RemoteTip,
+			Hidden: p.Hidden, PostInstall: p.PostInstall, Prereq: p.Prereqs,
 		})
 	}
 	enc := json.NewEncoder(os.Stdout)
@@ -245,54 +252,56 @@ func printJSON(configs []Config) {
 	}
 }
 
-func statusWord(c *Config) string {
-	switch {
-	case !c.Installed:
+func stateWord(s State) string {
+	switch s {
+	case StateAbsent:
 		return "absent"
-	case c.Desync:
+	case StateDesync:
 		return "désync"
-	default:
-		return "installé"
+	case StateUpdate:
+		return "à update"
+	case StateUpToDate:
+		return "à jour"
 	}
+	return string(s)
 }
 
 // ----- actions globales -----------------------------------------------------
 
-// collectUpdate rassemble les étapes de mise à jour de toutes les configs
-// installées. Les configs en désync sont signalées et ignorées.
-func collectUpdate(configs []Config) ([]step, []string) {
+// collectUpdate rassemble les étapes de mise à jour des paquets à update.
+func collectUpdate(pkgs []Package) ([]step, []string) {
 	var steps []step
 	var warns []string
-	for i := range configs {
-		c := &configs[i]
-		if c.Hidden || !c.Installed {
+	for i := range pkgs {
+		p := &pkgs[i]
+		if p.Hidden || p.State != StateUpdate {
 			continue
 		}
-		s, err := stepsFor(c)
+		s, err := updateSteps(p)
 		if err != nil {
 			warns = append(warns, err.Error())
 			continue
 		}
-		steps = append(steps, s)
+		steps = append(steps, s...)
 	}
 	return steps, warns
 }
 
-// collectMissing rassemble les étapes d'installation des configs absentes.
-func collectMissing(configs []Config) ([]step, []string) {
+// collectMissing rassemble les étapes d'installation des paquets absents.
+func collectMissing(pkgs []Package) ([]step, []string) {
 	var steps []step
 	var warns []string
-	for i := range configs {
-		c := &configs[i]
-		if c.Hidden || c.Installed {
+	for i := range pkgs {
+		p := &pkgs[i]
+		if p.Hidden || p.State != StateAbsent {
 			continue
 		}
-		s, err := stepsFor(c)
+		s, err := installSteps(p)
 		if err != nil {
 			warns = append(warns, err.Error())
 			continue
 		}
-		steps = append(steps, s)
+		steps = append(steps, s...)
 	}
 	return steps, warns
 }

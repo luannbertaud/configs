@@ -16,6 +16,7 @@ var (
 	cursorStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
 	selectedStyle = lipgloss.NewStyle().Bold(true)
 	okStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	updateStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
 	missingStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 	warnStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("214"))
 	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
@@ -29,23 +30,23 @@ var (
 )
 
 type model struct {
-	configs []Config
-	cursor  int
+	pkgs   []Package
+	cursor int
 
 	width, height int
 
 	loading bool
 	busy    bool
 	status  string
-	err     error
+	opErr   string // erreur d'opération, conservée jusqu'au prochain refresh/action
 
-	confirm *Config // config dont la suppression attend confirmation
+	confirm *Package
 }
 
 // messages.
 type loadedMsg struct {
-	configs []Config
-	err     error
+	pkgs []Package
+	err  error
 }
 
 type finishedMsg struct{ err error }
@@ -62,8 +63,8 @@ func runTUI() error {
 
 func discoverCmd() tea.Cmd {
 	return func() tea.Msg {
-		configs, err := discover()
-		return loadedMsg{configs, err}
+		pkgs, err := discover()
+		return loadedMsg{pkgs, err}
 	}
 }
 
@@ -80,11 +81,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loadedMsg:
 		m.loading = false
 		if msg.err != nil {
-			m.err = msg.err
+			m.opErr = msg.err.Error()
 		} else {
-			m.err = nil
-			m.status = ""
-			m.configs = msg.configs
+			m.pkgs = msg.pkgs
 			m.clampCursor()
 		}
 		return m, nil
@@ -92,9 +91,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case finishedMsg:
 		m.busy = false
 		if msg.err != nil {
-			m.err = msg.err
+			m.opErr = "échec : " + msg.err.Error()
 		} else {
-			m.err = nil
+			m.opErr = ""
 			m.status = ""
 		}
 		m.loading = true
@@ -113,7 +112,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.confirm != nil {
 		switch key {
 		case "o", "y", "enter":
-			return m.runRemove()
+			return m.runUninstall()
 		case "n", "esc", "q", "ctrl+c":
 			m.confirm = nil
 		}
@@ -135,11 +134,11 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter", "a":
 		return m.actionSelected()
 	case "d":
-		if c := m.current(); c != nil {
-			if c.Installed {
-				m.confirm = c
+		if p := m.current(); p != nil {
+			if p.Installed {
+				m.confirm = p
 			} else {
-				m.err = fmt.Errorf("%s : rien à supprimer (absent)", c.Branch)
+				m.opErr = p.Branch + " : rien à supprimer (absent)"
 			}
 		}
 	case "i":
@@ -147,68 +146,93 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		return m.globalAction(false)
 	case "r":
-		m.loading = true
-		m.err = nil
+		m.opErr = ""
 		m.status = ""
+		m.loading = true
 		return m, discoverCmd()
 	}
 	return m, nil
 }
 
-// actionSelected installe ou met à jour la configuration sélectionnée.
+// actionSelected installe, met à jour ou signale l'état du paquet sélectionné.
 func (m model) actionSelected() (tea.Model, tea.Cmd) {
-	c := m.current()
-	if c == nil {
+	p := m.current()
+	if p == nil {
 		return m, nil
 	}
-	s, err := stepsFor(c)
+	var steps []step
+	var err error
+	switch p.State {
+	case StateAbsent:
+		steps, err = installSteps(p)
+	case StateUpdate:
+		steps, err = updateSteps(p)
+	case StateUpToDate:
+		m.status = p.Branch + " : déjà à jour"
+		m.opErr = ""
+		return m, nil
+	default:
+		err = fmt.Errorf("%s : paquet désync, intervention manuelle requise", p.Branch)
+	}
 	if err != nil {
-		m.err = err
+		m.opErr = err.Error()
 		return m, nil
 	}
-	return m.exec([]step{s}, nil)
+	return m.exec(steps, nil)
 }
 
-// globalAction installe les manquantes (missing=true) ou met à jour toutes les
-// installées (missing=false).
+// globalAction installe les manquants (missing=true) ou met à jour tous les
+// paquets à update (missing=false).
 func (m model) globalAction(missing bool) (tea.Model, tea.Cmd) {
 	var steps []step
 	var warns []string
-	for i := range m.configs {
-		c := &m.configs[i]
-		if c.Hidden {
+	for i := range m.pkgs {
+		p := &m.pkgs[i]
+		if p.Hidden {
 			continue
 		}
-		if missing == c.Installed {
+		if missing && p.State != StateAbsent {
 			continue
 		}
-		s, err := stepsFor(c)
+		if !missing && p.State != StateUpdate {
+			continue
+		}
+		var s []step
+		var err error
+		if missing {
+			s, err = installSteps(p)
+		} else {
+			s, err = updateSteps(p)
+		}
 		if err != nil {
 			warns = append(warns, err.Error())
 			continue
 		}
-		steps = append(steps, s)
+		steps = append(steps, s...)
 	}
 	return m.exec(steps, warns)
 }
 
-// runRemove exécute la suppression confirmée.
-func (m model) runRemove() (tea.Model, tea.Cmd) {
-	c := m.confirm
+// runUninstall exécute la suppression confirmée.
+func (m model) runUninstall() (tea.Model, tea.Cmd) {
+	p := m.confirm
 	m.confirm = nil
-	if c == nil {
+	if p == nil {
 		return m, nil
 	}
-	s, err := removeStepFor(c)
+	steps, err := uninstallSteps(p)
 	if err != nil {
-		m.err = err
+		m.opErr = err.Error()
 		return m, nil
 	}
-	return m.exec([]step{s}, nil)
+	return m.exec(steps, nil)
 }
 
 // exec lance les étapes (avec d'éventuels avertissements) via tea.ExecProcess.
 func (m model) exec(steps []step, warns []string) (tea.Model, tea.Cmd) {
+	m.opErr = ""
+	m.status = ""
+
 	all := make([]step, 0, len(steps)+len(warns))
 	for _, w := range warns {
 		all = append(all, step{
@@ -224,7 +248,7 @@ func (m model) exec(steps []step, warns []string) (tea.Model, tea.Cmd) {
 	}
 	path, cleanup, err := buildScript(all)
 	if err != nil {
-		m.err = err
+		m.opErr = err.Error()
 		return m, nil
 	}
 	cmd := exec.Command("sh", path)
@@ -238,11 +262,11 @@ func (m model) exec(steps []step, warns []string) (tea.Model, tea.Cmd) {
 
 // ----- navigation -----------------------------------------------------------
 
-// visible renvoie les index des configs affichables (hors HIDDEN).
+// visible renvoie les index des paquets affichables (hors HIDDEN).
 func (m model) visible() []int {
 	var idx []int
-	for i := range m.configs {
-		if !m.configs[i].Hidden {
+	for i := range m.pkgs {
+		if !m.pkgs[i].Hidden {
 			idx = append(idx, i)
 		}
 	}
@@ -271,12 +295,12 @@ func (m *model) moveCursor(delta int) {
 	m.cursor = (m.cursor + delta + n) % n
 }
 
-func (m model) current() *Config {
+func (m model) current() *Package {
 	vis := m.visible()
 	if m.cursor < 0 || m.cursor >= len(vis) {
 		return nil
 	}
-	return &m.configs[vis[m.cursor]]
+	return &m.pkgs[vis[m.cursor]]
 }
 
 // ----- rendu ----------------------------------------------------------------
@@ -294,8 +318,7 @@ func (m model) View() string {
 
 	header := titleStyle.Render("configs") + subtitleStyle.Render("  —  "+repoSlug)
 
-	// Largeur de la boîte : plafonnée pour laisser des marges et rester
-	// centrée horizontalement.
+	// Largeur plafonnée pour garantir des marges et un centrage horizontal.
 	maxW := m.width - 8
 	if maxW > 84 {
 		maxW = 84
@@ -319,92 +342,99 @@ func (m model) View() string {
 
 func (m model) leftPane() string {
 	vis := m.visible()
-	if len(vis) == 0 {
-		return dimStyle.Render("aucune configuration")
-	}
 	var b strings.Builder
-	for i, ci := range vis {
-		c := m.configs[ci]
-		mark, _ := statusMark(&c)
+	b.WriteString(dimStyle.Render("PAQUETS") + "\n\n")
+	if len(vis) == 0 {
+		b.WriteString(dimStyle.Render("aucun paquet"))
+		return b.String()
+	}
+	for i, pi := range vis {
+		p := m.pkgs[pi]
+		mark, _ := stateMark(p.State)
 		if i == m.cursor {
-			fmt.Fprintf(&b, "%s %s\n", cursorStyle.Render("›"), mark+" "+selectedStyle.Render(c.label()))
+			fmt.Fprintf(&b, "%s %s\n", cursorStyle.Render("›"), mark+" "+selectedStyle.Render(p.label()))
 		} else {
-			fmt.Fprintf(&b, "  %s\n", mark+" "+c.label())
+			fmt.Fprintf(&b, "  %s\n", mark+" "+p.label())
 		}
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
 
 func (m model) rightPane() string {
-	c := m.current()
-	if c == nil {
-		return dimStyle.Render("Sélectionnez une configuration.")
+	p := m.current()
+	if p == nil {
+		return dimStyle.Render("Sélectionnez un paquet.")
 	}
 	var b strings.Builder
-	b.WriteString(titleStyle.Render(c.label()))
-	if c.Hidden {
+	b.WriteString(titleStyle.Render(p.label()))
+	if p.Hidden {
 		b.WriteString(dimStyle.Render(" (masqué)"))
 	}
-	b.WriteString("\n")
-	if c.Desc != "" {
-		b.WriteString(c.Desc + "\n")
+	b.WriteString("\n\n")
+	if p.Description != "" {
+		b.WriteString(p.Description + "\n")
 	}
 	b.WriteString("\n")
 
-	mark, word := statusMark(c)
-	fmt.Fprintf(&b, "%s %s %s\n", titleStyle.Render("statut   "), word, mark)
-	fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("cible    "), c.TargetPath)
-	fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("gestion  "), managementWord(c))
-	if c.Desync {
-		b.WriteString(warnStyle.Render("désync : cible non gérée par git") + "\n")
+	mark, word := stateMark(p.State)
+	fmt.Fprintf(&b, "%s %s %s\n", titleStyle.Render("état     "), word, mark)
+	fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("cible    "), p.TargetPath)
+	fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("gestion  "), managementWord(p))
+	if p.LastCommit != "" {
+		fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("commit   "), p.LastCommit)
 	}
-	if c.LastCommit != "" {
-		fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("commit   "), c.LastCommit)
-	}
-	if len(c.Prereq) > 0 {
+	if len(p.Prereq) > 0 {
 		b.WriteString(titleStyle.Render("prérequis") + " ")
-		for i, p := range c.Prereq {
+		for i, c := range p.Prereq {
 			mk := okStyle.Render("✓")
-			if !c.Prereqs[p] {
+			if !p.Prereqs[c] {
 				mk = missingStyle.Render("✗")
 			}
 			if i > 0 {
 				b.WriteString("  ")
 			}
-			b.WriteString(p + mk)
+			b.WriteString(c + mk)
 		}
 		b.WriteString("\n")
 	}
+	if p.PostInstall != "" {
+		fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("post-inst"), p.PostInstall)
+	}
+	if p.PostUninstall != "" {
+		fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("post-unin"), p.PostUninstall)
+	}
 
 	b.WriteString("\n")
-	b.WriteString(m.actionsHint(c))
+	b.WriteString(m.actionsHint(p))
 	return b.String()
 }
 
-// managementWord décrit comment la configuration est (ou serait) gérée, git ou
-// install.sh — y compris quand elle n'est pas encore installée.
-func managementWord(c *Config) string {
+// managementWord décrit comment le paquet est géré localement.
+func managementWord(p *Package) string {
 	switch {
-	case c.GitManaged && c.GitBranch != "":
-		return "dépôt git (branche " + c.GitBranch + ")"
-	case c.GitManaged:
-		return "dépôt git"
-	case c.HasInstall:
-		return "install.sh de la branche"
-	case c.Installed:
-		return "fichiers seuls"
+	case p.Managed:
+		return "dépôt git (branche " + p.Branch + ")"
+	case p.Installed:
+		return "présent, non géré (désync)"
 	default:
 		return "non installé"
 	}
 }
 
-func (m model) actionsHint(c *Config) string {
+func (m model) actionsHint(p *Package) string {
 	var parts []string
-	if c.Installed {
-		parts = append(parts, keyStyle.Render("a")+" mettre à jour")
-		parts = append(parts, keyStyle.Render("d")+" supprimer")
-	} else {
+	switch p.State {
+	case StateAbsent:
 		parts = append(parts, keyStyle.Render("a")+" installer")
+	case StateUpdate:
+		parts = append(parts, keyStyle.Render("a")+" mettre à jour")
+	case StateUpToDate:
+		parts = append(parts, keyStyle.Render("a")+" déjà à jour")
+	default:
+		parts = append(parts, dimStyle.Render("désync — intervention manuelle"))
+	}
+	if p.Installed {
+		parts = append(parts, keyStyle.Render("d")+" supprimer")
 	}
 	return dimStyle.Render("cette config :") + " " + strings.Join(parts, dimStyle.Render("  ·  "))
 }
@@ -412,8 +442,8 @@ func (m model) actionsHint(c *Config) string {
 func (m model) footer() string {
 	var b strings.Builder
 	switch {
-	case m.err != nil:
-		b.WriteString(errStyle.Render(m.err.Error()) + "\n")
+	case m.opErr != "":
+		b.WriteString(errStyle.Render(m.opErr) + "\n")
 	case m.loading:
 		b.WriteString(subtitleStyle.Render("actualisation…") + "\n")
 	case m.status != "":
@@ -426,25 +456,27 @@ func (m model) footer() string {
 }
 
 func (m model) confirmView() string {
-	c := m.confirm
-	body := warnStyle.Render("Désinstaller "+c.label()+" ?") + "\n\n"
-	if c.HasInstall {
-		body += "Retrait via l'install.sh de la branche (--uninstall).\n"
+	p := m.confirm
+	body := warnStyle.Render("Désinstaller "+p.label()+" ?") + "\n\n"
+	if p.PostUninstall != "" {
+		body += "Le script post_uninstall sera exécuté, puis le dossier sera retiré.\n"
 	} else {
-		body += "Suppression du dossier " + c.TargetPath + " (rm -rf).\n"
+		body += "Le dossier " + p.TargetPath + " sera supprimé (rm -rf).\n"
 	}
 	body += "\n" + keyStyle.Render("o") + " confirmer     " + keyStyle.Render("n") + " annuler"
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, confirmStyle.Render(body))
 }
 
-// statusMark renvoie l'icône et le mot d'état d'une config.
-func statusMark(c *Config) (string, string) {
-	switch {
-	case !c.Installed:
+// stateMark renvoie l'icône et le mot d'état d'un paquet.
+func stateMark(s State) (string, string) {
+	switch s {
+	case StateAbsent:
 		return missingStyle.Render("✗"), "absent"
-	case c.Desync:
+	case StateDesync:
 		return warnStyle.Render("!"), "désync"
+	case StateUpdate:
+		return updateStyle.Render("↑"), "à update"
 	default:
-		return okStyle.Render("✓"), "installé"
+		return okStyle.Render("✓"), "à jour"
 	}
 }
