@@ -15,6 +15,10 @@ return {
         require('nvim-treesitter').install({
             'lua',
             'python',
+            'go',
+            'gomod',
+            'gosum',
+            'gowork',
             'javascript',
             'typescript',
             'tsx',

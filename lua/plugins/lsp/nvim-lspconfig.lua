@@ -27,6 +27,7 @@ return {
         -- Activation EXPLICITE des serveurs (API native Neovim 0.12).
         vim.lsp.enable({
             'lua_ls',
+            'gopls',
             'basedpyright',
             'vtsls',
             'bashls',

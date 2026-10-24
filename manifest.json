@@ -2,5 +2,6 @@
   "name": "nvim",
   "description": "Configuration Neovim (lazy.nvim, LSP natif, Mason)",
   "target": "~/.config/nvim",
-  "prereq": ["nvim", "git", "rg", "fd", "fzf"]
+  "prereq": ["nvim", "git", "rg", "fd", "fzf", "bash"],
+  "post_uninstall": "scripts/post-uninstall.sh"
 }

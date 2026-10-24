@@ -54,6 +54,9 @@ scripts/nvim-clean.sh nvim -y         # sans confirmation
 Supprime `~/.local/share/nvim`, `~/.local/state/nvim` et `~/.cache/nvim`.
 **Conserve** `~/.config/nvim`. Ne touche pas au runtime dir partagé.
 
+La désinstallation via le gestionnaire (`configs --uninstall nvim`) exécute
+automatiquement ce nettoyage avant de retirer le clone de `~/.config/nvim`.
+
 ## Étendre la configuration
 
 Chaque plugin = **un fichier** dans `lua/plugins/<domaine>/`, avec un domaine

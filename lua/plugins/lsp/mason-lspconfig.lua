@@ -9,6 +9,7 @@ return {
     opts = {
         ensure_installed = {
             'lua_ls', -- Lua
+            'gopls', -- Go
             'basedpyright', -- Python
             'vtsls', -- TypeScript / JavaScript
             'bashls', -- Shell
