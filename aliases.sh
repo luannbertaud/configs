@@ -2,6 +2,13 @@
 # https://github.com/luannbertaud/configs/tree/aliases
 
 alias ll='ls -lah'
+alias n='nvim'
+
+# Gestionnaire de paquets, lancé via curl. Les arguments sont transmis :
+#   configs --list · configs --install nvim · configs --update
+configs() {
+    curl -fsSL https://raw.githubusercontent.com/luannbertaud/configs/main/run.sh | sh -s -- "$@"
+}
 
 alias gst='git status'
 alias gadog='git log --all --decorate --oneline --graph'
