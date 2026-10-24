@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -29,16 +30,23 @@ var (
 	confirmStyle  = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(1, 3)
 )
 
+// helpLine tient sur une seule ligne dans le cadre.
+const helpLine = "↑/↓ choisir · entrée/a agir · d supprimer · i manquants · u màj · r actualiser · q quitter"
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 type model struct {
 	pkgs   []Package
 	cursor int
 
 	width, height int
 
-	loading bool
-	busy    bool
-	status  string
-	opErr   string // erreur d'opération, conservée jusqu'au prochain refresh/action
+	loading   bool
+	busy      bool
+	status    string
+	opErr     string // erreur d'opération, conservée jusqu'au prochain refresh/action
+	spinner   int
+	spinnerID int
 
 	confirm *Package
 }
@@ -51,8 +59,10 @@ type loadedMsg struct {
 
 type finishedMsg struct{ err error }
 
+type tickMsg struct{ id int }
+
 func newModel() model {
-	return model{loading: true}
+	return model{loading: true, spinnerID: 1}
 }
 
 func runTUI() error {
@@ -68,8 +78,20 @@ func discoverCmd() tea.Cmd {
 	}
 }
 
+func tickCmd(id int) tea.Cmd {
+	return tea.Tick(110*time.Millisecond, func(time.Time) tea.Msg { return tickMsg{id} })
+}
+
+// startLoading relance la découverte avec un spinner identifié, pour ignorer
+// les ticks d'une actualisation précédente.
+func (m *model) startLoading() tea.Cmd {
+	m.loading = true
+	m.spinnerID++
+	return tea.Batch(discoverCmd(), tickCmd(m.spinnerID))
+}
+
 func (m model) Init() tea.Cmd {
-	return discoverCmd()
+	return tea.Batch(discoverCmd(), tickCmd(m.spinnerID))
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -77,6 +99,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+
+	case tickMsg:
+		if !m.loading || msg.id != m.spinnerID {
+			return m, nil
+		}
+		m.spinner++
+		return m, tickCmd(msg.id)
 
 	case loadedMsg:
 		m.loading = false
@@ -96,8 +125,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.opErr = ""
 			m.status = ""
 		}
-		m.loading = true
-		return m, discoverCmd()
+		return m, m.startLoading()
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -148,8 +176,7 @@ func (m model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		m.opErr = ""
 		m.status = ""
-		m.loading = true
-		return m, discoverCmd()
+		return m, m.startLoading()
 	}
 	return m, nil
 }
@@ -316,20 +343,17 @@ func (m model) View() string {
 		return m.confirmView()
 	}
 
+	contentW := m.contentWidth()
+	if m.loading {
+		return m.loaderView(contentW)
+	}
+
 	header := titleStyle.Render("configs") + subtitleStyle.Render("  —  "+repoSlug)
 
-	// Largeur plafonnée pour garantir des marges et un centrage horizontal.
-	maxW := m.width - 8
-	if maxW > 84 {
-		maxW = 84
-	}
-	if maxW < 40 {
-		maxW = 40
-	}
-	leftW := 26
-	rightW := maxW - leftW - 10
-	if rightW < 28 {
-		rightW = 28
+	leftW := 22
+	rightW := contentW - leftW - 5
+	if rightW < 24 {
+		rightW = 24
 	}
 
 	left := leftStyle.Width(leftW).Render(m.leftPane())
@@ -337,7 +361,27 @@ func (m model) View() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
 	content := lipgloss.JoinVertical(lipgloss.Left, header, "", body, "", m.footer())
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, boxStyle.Render(content))
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, boxStyle.Width(contentW+4).Render(content))
+}
+
+// contentWidth dimensionne le cadre pour que la ligne d'aide tienne sur une
+// seule ligne, tout en gardant des marges sur les côtés.
+func (m model) contentWidth() int {
+	w := lipgloss.Width(helpLine)
+	if max := m.width - 8; w > max {
+		w = max
+	}
+	if w < 50 {
+		w = 50
+	}
+	return w
+}
+
+func (m model) loaderView(contentW int) string {
+	frame := spinnerFrames[m.spinner%len(spinnerFrames)]
+	body := titleStyle.Render("configs") + "\n\n" + subtitleStyle.Render(frame+"  actualisation…")
+	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center,
+		boxStyle.Width(contentW+4).Render(body))
 }
 
 func (m model) leftPane() string {
@@ -397,12 +441,6 @@ func (m model) rightPane() string {
 		}
 		b.WriteString("\n")
 	}
-	if p.PostInstall != "" {
-		fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("post-inst"), p.PostInstall)
-	}
-	if p.PostUninstall != "" {
-		fmt.Fprintf(&b, "%s %s\n", titleStyle.Render("post-unin"), p.PostUninstall)
-	}
 
 	b.WriteString("\n")
 	b.WriteString(m.actionsHint(p))
@@ -413,9 +451,11 @@ func (m model) rightPane() string {
 func managementWord(p *Package) string {
 	switch {
 	case p.Managed:
-		return "dépôt git (branche " + p.Branch + ")"
+		return "clone git · branche " + p.Branch
+	case p.Installed && p.DesyncReason != "":
+		return "désync · " + p.DesyncReason
 	case p.Installed:
-		return "présent, non géré (désync)"
+		return "présent, non géré"
 	default:
 		return "non installé"
 	}
@@ -429,7 +469,7 @@ func (m model) actionsHint(p *Package) string {
 	case StateUpdate:
 		parts = append(parts, keyStyle.Render("a")+" mettre à jour")
 	case StateUpToDate:
-		parts = append(parts, keyStyle.Render("a")+" déjà à jour")
+		parts = append(parts, dimStyle.Render("déjà à jour"))
 	default:
 		parts = append(parts, dimStyle.Render("désync — intervention manuelle"))
 	}
@@ -440,19 +480,14 @@ func (m model) actionsHint(p *Package) string {
 }
 
 func (m model) footer() string {
-	var b strings.Builder
-	switch {
-	case m.opErr != "":
-		b.WriteString(errStyle.Render(m.opErr) + "\n")
-	case m.loading:
-		b.WriteString(subtitleStyle.Render("actualisation…") + "\n")
-	case m.status != "":
-		b.WriteString(dimStyle.Render(m.status) + "\n")
+	var lines []string
+	if m.opErr != "" {
+		lines = append(lines, errStyle.Render(m.opErr))
+	} else if m.status != "" {
+		lines = append(lines, dimStyle.Render(m.status))
 	}
-	b.WriteString(helpStyle.Render("↑/↓ sélectionner · entrée/a agir · d supprimer"))
-	b.WriteString("\n")
-	b.WriteString(helpStyle.Render("i installer les manquants · u tout mettre à jour · r actualiser · q quitter"))
-	return b.String()
+	lines = append(lines, helpStyle.Render(helpLine))
+	return strings.Join(lines, "\n")
 }
 
 func (m model) confirmView() string {

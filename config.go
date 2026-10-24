@@ -56,6 +56,9 @@ type Package struct {
 	LastCommit string
 	Prereqs    map[string]bool
 
+	// DesyncReason précise pourquoi un dossier présent n'est pas géré.
+	DesyncReason string
+
 	State State
 }
 
@@ -182,7 +185,21 @@ func (p *Package) inspect() {
 	}
 	p.Installed = true
 
-	if !isGitWorktree(p.TargetPath) || !originMatches(p.TargetPath) || currentBranch(p.TargetPath) != p.Branch {
+	if !isGitWorktree(p.TargetPath) {
+		p.DesyncReason = "dossier non git"
+		p.State = StateDesync
+		return
+	}
+	if !originMatches(p.TargetPath) {
+		p.DesyncReason = "clone d'un autre dépôt"
+		p.State = StateDesync
+		return
+	}
+	if branch := currentBranch(p.TargetPath); branch != p.Branch {
+		if branch == "" {
+			branch = "HEAD détaché"
+		}
+		p.DesyncReason = "mauvaise branche (" + branch + ")"
 		p.State = StateDesync
 		return
 	}
@@ -195,6 +212,7 @@ func (p *Package) inspect() {
 		p.LastCommit = strings.TrimSpace(out)
 	}
 	if isDirty(p.TargetPath) {
+		p.DesyncReason = "fichiers suivis modifiés"
 		p.State = StateDesync
 		return
 	}
