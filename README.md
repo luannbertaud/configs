@@ -13,8 +13,10 @@ curl -fsSL https://raw.githubusercontent.com/luannbertaud/configs/main/run.sh | 
 ```
 
 `run.sh` détecte la plateforme, télécharge le binaire de la dernière *release*
-dans un dossier temporaire et l'exécute. Rien n'est installé de façon
-permanente.
+et l'exécute. Le binaire est mis en cache dans
+`${XDG_CACHE_HOME:-$HOME/.cache}/configs` et réutilisé tant que la dernière
+release n'a pas changé ; supprimer ce dossier force un nouveau téléchargement.
+Si GitHub est injoignable, le binaire en cache est utilisé.
 
 Avec des arguments (notez le `-s --` pour `curl | sh`) :
 
